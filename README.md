@@ -26,7 +26,7 @@ For contributing, running the offline example, or building the package, see [CON
 
 For a complete script that reads your training data, see the [CSV example](examples/README.md).
 
-Prepare a model, a training dataset with ordered columns `query, positive, query_id, item_id`, and aligned corpus text/ID lists:
+Prepare a model, a training dataset with ordered columns `anchor, positive, query_id, document_id`, and aligned corpus text/ID lists. The anchor contains the query text and the positive contains the matching document text.
 
 ```python
 from sentence_transformers import (
@@ -34,34 +34,38 @@ from sentence_transformers import (
     SentenceTransformerTrainer,
     SentenceTransformerTrainingArguments,
 )
+from sentence_transformers.base.sampler import BatchSamplers
 from cosmea import (
-    ItemFrequency,
+    DocumentFrequency,
     MixedNegativeDataCollator,
     LogQMultipleNegativesRankingLoss,
 )
 
 model = SentenceTransformer("path/to/local/model", device="cpu")
-frequency = ItemFrequency.from_dataset(train_dataset, item_id_column="item_id")
+frequency = DocumentFrequency.from_dataset(train_dataset, document_id_column="document_id")
 
 collator = MixedNegativeDataCollator(
     preprocess_fn=model.preprocess,
-    item_frequency=frequency,
+    document_frequency=frequency,
     corpus=corpus_texts,
     corpus_ids=corpus_ids,
     num_uniform=64,  # Must not exceed the distinct corpus size.
     query_id_column="query_id",
-    item_id_column="item_id",
+    document_id_column="document_id",
 )
 
 loss = LogQMultipleNegativesRankingLoss(
     model,
     variant="yi",
     logq_strength=1.0,
+    mask_same_document=True,
+    mask_same_query=True,
 )
 
 args = SentenceTransformerTrainingArguments(
     output_dir="outputs/run",
     per_device_train_batch_size=64,
+    batch_sampler=BatchSamplers.BATCH_SAMPLER,
     use_cpu=True,
     report_to="none",
     save_strategy="no",
@@ -82,7 +86,9 @@ If the model needs prompts, Router tasks or length limits, pass `prompts`, `rout
 
 For held-out evaluation, use a retrieval `evaluator` instead of reusing this collator with `eval_dataset`. Unknown positive IDs in `eval_dataset` cause an error; see the [evaluation guide](docs/api.md#evaluate-and-reproduce-a-run).
 
-Compute frequencies from the **same split that the DataLoader samples uniformly**. NO_DUPLICATES, weighted or grouped samplers invalidate this proposal model. For held-out quality, evaluate retrieval against the full corpus; reusing training frequencies for held-out in-batch loss generally gives the wrong correction.
+The standard workflow uses random row sampling with both known-positive masks enabled, as shown above. Build counts from the same training split. The masks exclude the anchor's positive and other positives attached to the same query in the batch, including matching IDs in uniform or mined candidates.
+
+The example explicitly sets `mask_same_document=True`. The API default is `None`, which resolves to False for yi and True for plugin/improved; `mask_same_query` defaults to True. This masked yi objective differs from yi with its default settings. Masking can reduce the usable negative count; adjust `num_uniform` and evaluate retrieval quality. Alternative sampler configurations are described in the [API guide](docs/api.md#choose-a-batch-sampler).
 
 Both loss classes can also be wrapped in [MatryoshkaLoss](docs/api.md#train-at-multiple-embedding-sizes) to train several embedding sizes together.
 
@@ -90,7 +96,7 @@ Both loss classes can also be wrapped in [MatryoshkaLoss](docs/api.md#train-at-m
 
 | API | Responsibility |
 | --- | --- |
-| `ItemFrequency` | Static positive-item counts, with int64 IDs/counts |
+| `DocumentFrequency` | Static positive-document counts, with int64 IDs/counts |
 | `MixedNegativeDataCollator` | K distinct corpus samples without replacement and a dict label of IDs/counts/sources |
 | `LogQMultipleNegativesRankingLoss` | Ordinary forward/backward |
 | `CachedLogQMultipleNegativesRankingLoss` | ST GradCache with query-row chunks |

@@ -11,7 +11,7 @@ First [install Cosmea with the train extra](../README.md#installation), then cop
 `train.csv`:
 
 ```csv
-query,positive,query_id,item_id
+anchor,positive,query_id,document_id
 python lists,A guide to Python lists,q1,p1
 sql joins,An introduction to SQL joins,q2,p2
 ```
@@ -19,13 +19,15 @@ sql joins,An introduction to SQL joins,q2,p2
 `corpus.csv`:
 
 ```csv
-item_id,text
+document_id,text
 p1,A guide to Python lists
 p2,An introduction to SQL joins
 p3,A guide to garden flowers
 ```
 
-All IDs are read as strings, and every positive ID must appear in the corpus for the default yi loss. The `positive` text should describe the same item as its corpus entry.
+The `anchor` is the query text, and the `positive` is the matching document text. The script also accepts `query` and `document` for those text columns and `item_id` for `document_id` in older CSVs.
+
+All IDs are read as strings, and every positive ID must appear in the corpus for the default yi loss. The `positive` text should describe the same document as its corpus entry.
 
 ```bash
 uv run python train_from_csv.py \
@@ -35,6 +37,8 @@ uv run python train_from_csv.py \
   --output outputs/retriever \
   --uniform 2
 ```
+
+The CSV script follows the README workflow with `BatchSamplers.BATCH_SAMPLER`, `mask_same_document=True` and `mask_same_query=True`. These masks are explicitly set in the example; yi otherwise resolves the API default `mask_same_document=None` to False.
 
 `--model` accepts a local Sentence Transformers model directory or a Hugging Face model ID. Using a remote ID may download its files. The uniform count cannot exceed the number of distinct corpus IDs. The trained model is saved to `outputs/retriever/model`; run folders can be selected with `--output`.
 

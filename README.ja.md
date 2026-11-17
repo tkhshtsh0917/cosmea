@@ -26,7 +26,7 @@ uvは取得したGitコミットをお使いのプロジェクトの`uv.lock`へ
 
 手元のデータを読み込んで学習する完全なスクリプトは、[CSV学習例](examples/README.ja.md)を参照してください。
 
-`train_dataset`には`query, positive, query_id, item_id`の順に列を持つ学習データを用意します。`corpus_texts`は検索対象のテキスト一覧、`corpus_ids`は同じ順番のID一覧です。IDの付け方と追加の負例列は[APIガイド](docs/ja/api.md)で説明しています。
+`train_dataset`には`anchor, positive, query_id, document_id`の順に列を持つ学習データを用意します。`anchor`はクエリのテキスト、`positive`は対応する文書のテキストです。`corpus_texts`は検索対象のテキスト一覧、`corpus_ids`は同じ順番のID一覧です。IDの付け方と追加の負例列は[APIガイド](docs/ja/api.md)で説明しています。
 
 ```python
 from sentence_transformers import (
@@ -34,36 +34,40 @@ from sentence_transformers import (
     SentenceTransformerTrainer,
     SentenceTransformerTrainingArguments,
 )
+from sentence_transformers.base.sampler import BatchSamplers
 from cosmea import (
-    ItemFrequency,
+    DocumentFrequency,
     MixedNegativeDataCollator,
     LogQMultipleNegativesRankingLoss,
 )
 
 model = SentenceTransformer("path/to/local/model", device="cpu")
-# train_dataset の列順: query, positive, query_id, item_id
+# train_dataset の列順: anchor, positive, query_id, document_id
 # corpus_texts と corpus_ids は同じ順番で、同じID体系を使う。
-frequency = ItemFrequency.from_dataset(train_dataset, item_id_column="item_id")
+frequency = DocumentFrequency.from_dataset(train_dataset, document_id_column="document_id")
 
 collator = MixedNegativeDataCollator(
     preprocess_fn=model.preprocess,
-    item_frequency=frequency,
+    document_frequency=frequency,
     corpus=corpus_texts,
     corpus_ids=corpus_ids,
     num_uniform=64,  # コーパス内の異なるIDの数を超えないようにする。
     query_id_column="query_id",
-    item_id_column="item_id",
+    document_id_column="document_id",
 )
 
 loss = LogQMultipleNegativesRankingLoss(
     model,
     variant="yi",
     logq_strength=1.0,
+    mask_same_document=True,
+    mask_same_query=True,
 )
 
 args = SentenceTransformerTrainingArguments(
     output_dir="outputs/run",
     per_device_train_batch_size=64,
+    batch_sampler=BatchSamplers.BATCH_SAMPLER,
     use_cpu=True,
     report_to="none",
     save_strategy="no",
@@ -84,7 +88,9 @@ prompt・Routerのtask・長さ制限が必要なら、`prompts`・`router_mappi
 
 未知データの評価には、同じコレーターで`eval_dataset`を処理する代わりに検索用`evaluator`を使います。`eval_dataset`に未知の正例IDがあるとエラーになります。[評価ガイド](docs/ja/api.md#評価と再現性)を参照してください。
 
-頻度は **そのDataLoaderがランダム抽出する学習split** から作ります。`NO_DUPLICATES`、重み付き・グループ化サンプラーを使うと、この頻度から計算したQは合いません。未知のデータでの品質は、全コーパスを検索して評価してください。評価用バッチの損失へ学習頻度を使い回すと、一般に補正が合わなくなります。
+標準手順は、上の例のようにランダムな行抽出と2つの既知正例マスクを組み合わせます。頻度は同じ学習splitから作ります。アンカーの正例と、同じクエリに紐づくバッチ内の別の正例を、負例から除外します。一様負例・採掘負例に同じ文書IDがある場合も対象です。
+
+例では`mask_same_document=True`を明示しています。APIの既定は`None`で、yiではFalse、plugin/improvedではTrueとして扱います。`mask_same_query`の既定はTrueです。この例のマスク付きyiは、引数を省略したyiとは目的関数が異なります。マスクで有効な負例数が減る場合は、`num_uniform`を調整し、検索品質を評価してください。別のサンプラーを組み合わせる手順は[APIガイド](docs/ja/api.md#バッチサンプラーを選ぶ)にまとめています。
 
 通常版・Cached版のどちらも、[MatryoshkaLoss](docs/ja/api.md#複数の埋め込み次元で学習する)で包み、複数の埋め込み次元をまとめて学習できます。
 
@@ -92,7 +98,7 @@ prompt・Routerのtask・長さ制限が必要なら、`prompts`・`router_mappi
 
 | API | 役割 |
 | --- | --- |
-| `ItemFrequency` | 正例IDの静的カウント。ID・頻度はint64 |
+| `DocumentFrequency` | 正例IDの静的カウント。ID・頻度はint64 |
 | `MixedNegativeDataCollator` | K個のコーパス負例を非復元抽出し、ID・頻度・情報源をdictラベルで損失へ渡す |
 | `LogQMultipleNegativesRankingLoss` | 通常のforward/backward |
 | `CachedLogQMultipleNegativesRankingLoss` | STのGradCacheを使い、クエリ行をチャンク計算 |

@@ -6,40 +6,42 @@ Start with the [README example](../README.md#use-your-own-data). This guide expl
 
 ## Prepare pairs and a searchable collection
 
-A **positive** is an item known to match a query, such as a document that was clicked. A **negative** is a comparison item used during training; it is not necessarily irrelevant. The **corpus** is the complete collection of items you want to search.
+A **query** is the search input and a **document** is a searchable entry. In a training row, the query is the **anchor**. A **positive** is an document known to match a query, such as a document that was clicked. A **negative** is a comparison document used during training; it is not necessarily irrelevant. The **corpus** is the complete collection of documents you want to search.
 
 Prepare the following inputs:
 
 | Input | What to put in it |
 | --- | --- |
-| Training dataset | Columns in the order `query, positive, query_id, item_id` |
-| `corpus` | A list of item texts, including items without clicks |
+| Training dataset | Columns in the order `anchor, positive, query_id, document_id` |
+| `corpus` | A list of document texts, including documents without clicks |
 | `corpus_ids` | IDs in the same order as `corpus` |
-| `ItemFrequency` | Counts built from the training dataset that the DataLoader actually samples |
+| `DocumentFrequency` | Counts built from the training dataset that the DataLoader actually samples |
 
-The collator prepares a group of examples for the model. After removing ID columns, it reads the first two text columns as query and positive. Remove unrelated metadata columns. Dataset columns named `label`, `labels`, `score` or `scores` are reserved and cause an error.
+The collator prepares a group of examples for the model. After removing ID columns, it reads the first two text columns as anchor and positive. Any additional text columns supply negatives. The column names are configurable through the dataset schema; their order determines their training role. Remove unrelated metadata columns. Dataset columns named `label`, `labels`, `score` or `scores` are reserved and cause an error.
 
-Use the same ID for the same item everywhere. IDs may be strings, bytes, or signed 64-bit integers. Text IDs are converted to stable 64-bit hashes; `"12"` and `12` are different IDs. Hash collisions are possible, so a consistent integer ID mapping is preferable for large collections. Without explicit IDs, items are identified by exact text equality.
+Use the same ID for the same document everywhere. IDs may be strings, bytes, or signed 64-bit integers. Text IDs are converted to stable 64-bit hashes; `"12"` and `12` are different IDs. Hash collisions are possible, so a consistent integer ID mapping is preferable for large collections. Without explicit IDs, documents are identified by exact text equality.
 
-A positive ID missing from `ItemFrequency` causes an error. Repeated corpus IDs are merged, keeping the first text; sampling is uniform over the remaining distinct IDs.
+A positive ID missing from `DocumentFrequency` causes an error. Repeated corpus IDs are merged, keeping the first text; sampling is uniform over the remaining distinct IDs.
+
+Existing code can still use `ItemFrequency` and the keywords `item_frequency`, `item_id_column`, `extra_item_id_columns` and `mask_same_item`. Use `DocumentFrequency`, `document_frequency`, `document_id_column`, `extra_document_id_columns` and `mask_same_document` in new code.
 
 ## Set prompts, Router tasks and length limits
 
 Pass `prompts`, `router_mapping` and `max_length` directly to `MixedNegativeDataCollator`. Sentence Transformers does not copy these TrainingArguments settings into a custom collator. Setting them only on the Trainer can silently omit the expected preprocessing.
 
-The following illustrates a Router model with query/document tasks. Use the prompts and task names your model requires; for an ordinary model omit `router_mapping` and use an integer `max_length`.
+The following illustrates a Router model with query/document tasks. Mapping keys are dataset columns, and mapping values are Router task names. Use the prompts and task names your model requires; for an ordinary model omit `router_mapping` and use an integer `max_length`.
 
 ```python
 collator = MixedNegativeDataCollator(
     preprocess_fn=model.preprocess,
-    item_frequency=frequency,
+    document_frequency=frequency,
     corpus=corpus_texts,
     corpus_ids=corpus_ids,
     num_uniform=64,
     query_id_column="query_id",
-    item_id_column="item_id",
-    prompts={"query": "query: ", "positive": "passage: "},
-    router_mapping={"query": "query", "positive": "document"},
+    document_id_column="document_id",
+    prompts={"anchor": "query: ", "positive": "passage: "},
+    router_mapping={"anchor": "query", "positive": "document"},
     max_length={"query": 64, "document": 256},
 )
 ```
@@ -50,33 +52,34 @@ Uniform candidates always use the positive column's prompt, task and length limi
 
 Extra text columns, such as a hard negative found by another retriever, are also included as candidates. Their sampling probability is unknown, so Cosmea leaves these extra terms uncorrected.
 
-If positives use explicit item IDs, supply an ID column for every extra negative column too:
+If positives use explicit document IDs, supply an ID column for every extra negative column too:
 
 ```python
 collator = MixedNegativeDataCollator(
     preprocess_fn=model.preprocess,
-    item_frequency=frequency,
-    item_id_column="item_id",
-    extra_item_id_columns={"hard_negative": "hard_negative_id"},
+    document_frequency=frequency,
+    document_id_column="document_id",
+    extra_document_id_columns={"hard_negative": "hard_negative_id"},
 )
 ```
 
-This lets Cosmea recognize that two different texts refer to the same item. A missing mapping causes an error.
+This lets Cosmea recognize that two different texts refer to the same document. A missing mapping causes an error.
 
 Use `combine="separate"` to give mined negatives their own uncorrected objective (the default for yi). In pooled mode their influence can shrink relative to corrected candidates as the training population grows; see [mined negatives and monitoring](design.md#mined-negatives-and-loss-monitoring).
 
 ## Choose the main options
 
-Start with yi/separate or plugin/pooled, both using expected counts. These are starting points for comparison, not a claim that one always works best. `improved`, inclusion and mask overrides are advanced research controls; `improved` must not be selected by its scalar evaluation loss.
+Follow the README with random row sampling, `mask_same_document=True` and `mask_same_query=True`. It uses yi/separate with expected counts; plugin/pooled is another objective to compare under the same sampling and masks. `improved` and inclusion are advanced research controls; `improved` must not be selected by its scalar evaluation loss.
 
 | Option | Meaning |
 | --- | --- |
-| `num_uniform` | Number of distinct corpus items to add to each batch. Use 0 for in-batch negatives alone; do not exceed the number of distinct corpus IDs |
+| `num_uniform` | Number of distinct corpus documents to add to each batch. Use 0 for in-batch negatives alone; do not exceed the number of distinct corpus IDs |
 | `variant` | `yi` is the default. See [how the losses differ](design.md#three-loss-options) before switching to `plugin` or `improved` |
 | `logq_strength` | Strength of the correction: 0 disables it, 1 applies it fully. Must be finite and nonnegative. Intermediate values need evaluation |
+| `in_batch_logq_strength` / `uniform_logq_strength` | Overrides for the corresponding source with `combine="separate"`. `None` inherits `logq_strength`. Each value must be finite and nonnegative. A zero leaves that source's loss active and skips its correction. Pooled mode uses one shared strength |
 | `scale` | Multiplies similarity before correction; default 20. Must be finite and positive. It is the inverse temperature |
 | `combine` | `pooled` uses all candidate sources together. `separate` computes one loss per source and averages the active sources. `auto` chooses separate for yi and pooled otherwise |
-| `q_measure` | `expected_count` keeps repeated items and uses their expected number of appearances. `inclusion` keeps one eligible occurrence per item and uses the chance of appearing at least once. Inclusion is unavailable with yi |
+| `q_measure` | `expected_count` keeps repeated documents and uses their expected number of appearances. `inclusion` keeps one eligible occurrence per document and uses the chance of appearing at least once. Inclusion is unavailable with yi |
 | `mini_batch_size` | Positive integer chunk size for the Cached loss. Smaller chunks reduce score-matrix memory. Gradient accumulation alone does not increase the candidate pool |
 
 In-batch, uniform and extra mined candidates are separate sources. A source with no usable negatives for a query is left out of the separate average. For example, a batch with one training row does not halve the uniform-source loss by averaging it with an empty in-batch loss.
@@ -85,16 +88,49 @@ In-batch, uniform and extra mined candidates are separate sources. A source with
 
 **Masking** means leaving a candidate out of the loss calculation.
 
-- `mask_same_item=None` keeps accidental occurrences of the positive item for yi and excludes them for plugin/improved. Setting True or False overrides this choice and changes the objective.
-- `mask_same_query=True` uses the positives attached to matching queries in the current batch. It cannot find all relevant items in the corpus. This filtering is a practical heuristic; the strict unbiased-estimator result does not cover it.
+- `mask_same_document=None` keeps accidental occurrences of the positive document for yi and excludes them for plugin/improved. Setting True or False overrides this choice and changes the objective.
+- `mask_same_query=True` uses the positives attached to matching queries in the current batch. It cannot find all relevant documents in the corpus. This filtering is a practical heuristic; the strict unbiased-estimator result does not cover it.
 
-With yi defaults (`mask_same_item=False`), query matching excludes matching positive columns only; copies in uniform/mined columns remain eligible. Set `mask_same_item=True` to propagate known item matches to all candidate columns, which changes the yi objective.
+With yi defaults (`mask_same_document=False`), query matching excludes matching positive columns only; copies in uniform/mined columns remain eligible. Set `mask_same_document=True` to propagate known document matches to all candidate columns, which changes the yi objective.
 
-For yi with a separate uniform loss, every positive ID must also occur in the corpus. Cosmea reports an error when this condition is not met.
+For yi with an active separate uniform correction, every positive ID must also occur in the corpus. Cosmea reports an error when this condition is not met.
+
+## Choose a batch sampler
+
+The standard Cosmea workflow uses `BatchSamplers.BATCH_SAMPLER`, `mask_same_document=True` and `mask_same_query=True`. This keeps the row draw aligned with the count-based proposal and removes known positives from negative candidates.
+
+With the default random row sampler, `mask_same_document=True` masks candidate IDs that match the anchor's known positives. Combine it with `mask_same_query=True` to use the other positives attached to the same query in the batch. This also catches known positives in uniform or mined negatives, which are outside the sampler's check. Duplicates of other negative documents can still remain. Masked candidates are not replaced with other rows, so duplicate-heavy data can leave fewer usable negatives. Tune the uniform count using held-out retrieval metrics.
+
+### Keep an existing NO_DUPLICATES setup
+
+Sentence Transformers recommends [`NO_DUPLICATES` for in-batch negative losses](https://sbert.net/docs/package_reference/base/sampler.html). It avoids repeated input values across rows even when the values occur in different columns. In Sentence Transformers 6.3 this comparison also includes explicit ID columns, so use distinct namespaces for query and document IDs to avoid accidental matches between the two.
+
+`NO_DUPLICATES` changes which rows may join a batch. With a row already selected, the chance of selecting another document depends on the values in the rows selected so far. The current count-based in-batch Q assumes uniform row sampling, including with `q_measure="inclusion"`. Weighted and grouped samplers also require their own proposal. Uniform corpus sampling is independent of the row sampler, so its correction only needs the corpus size and the number of draws.
+
+For MNS with `NO_DUPLICATES` and uniform-only logQ correction, keep `num_uniform > 0` on the collator and use the following settings with the Trainer:
+
+```python
+from sentence_transformers.base.sampler import BatchSamplers
+
+args = SentenceTransformerTrainingArguments(
+    output_dir="outputs/run",
+    batch_sampler=BatchSamplers.NO_DUPLICATES,
+)
+loss = LogQMultipleNegativesRankingLoss(
+    model,
+    variant="plugin",
+    combine="separate",
+    in_batch_logq_strength=0,
+    uniform_logq_strength=1,
+    mask_same_document=True,
+)
+```
+
+The plugin loss leaves the positive logit unchanged, so the uniform correction changes the loss. In a separate yi objective, the same uniform logQ offset applies to the positive and all uniform negatives and cancels inside their softmax. A positive with an active yi uniform correction must still belong to the corpus. Both the ordinary and cached Cosmea losses accept the same strengths.
+
+For plugin, the uniform term is $\log(1+(M/K)^{\lambda_u}S_u/e^{F_p})$, where $S_u$ sums the exponentiated eligible uniform scores, $F_p$ is the positive score and $\lambda_u$ is the uniform correction strength. At strength 1, this estimates a full-corpus negative sum. It changes the margin against the positive by $\log(M/K)$ and the resulting gradient. It is not a document-specific popularity correction. An unbiased sum does not imply unbiased loss or gradients, or improved retrieval quality. The separate average with an uncorrected in-batch loss remains a composite objective. Only sources with eligible negatives enter that average.
 
 ## Evaluate and reproduce a run
-
-Use the default uniform random row sampler. `NO_DUPLICATES`, weighted samplers and grouped samplers change which rows are drawn, so the same count-based correction no longer describes their sampling.
 
 Build counts from the sampled training split. For held-out quality, search the full corpus and compute retrieval metrics. Reusing training counts for a different evaluation split generally gives the wrong sampling correction. The Trainer evaluation test checks that metadata reaches the loss; it is not a held-out quality result.
 
@@ -111,7 +147,7 @@ evaluator = InformationRetrievalEvaluator(
 )
 ```
 
-Pass this as `evaluator=evaluator` alongside the training dataset and collator. An `eval_dataset` containing positive IDs absent from training counts raises `Positive ID absent from item_frequency`; even if all IDs exist, training counts generally give the wrong evaluation proposal. The collator is not a full-corpus evaluator. For early stopping or best-checkpoint selection, use a held-out retrieval metric, not the `improved` scalar loss.
+Pass this as `evaluator=evaluator` alongside the training dataset and collator. An `eval_dataset` containing positive IDs absent from training counts raises `Positive ID absent from document_frequency`; even if all IDs exist, training counts generally give the wrong evaluation proposal. The collator is not a full-corpus evaluator. For early stopping or best-checkpoint selection, use a held-out retrieval metric, not the `improved` scalar loss.
 
 Each DataLoader worker gets its own random stream derived from PyTorch's RNG. The same launch conditions are needed for reproducibility. Restoring the exact collator stream from a checkpoint, or keeping identical draws after changing the worker count, is not guaranteed.
 
@@ -150,11 +186,11 @@ Let $B$ be the number of training rows, $H$ the number of extra negative columns
 | Key | Shape / type | Meaning |
 | --- | --- | --- |
 | `query_id` | $(B,)$ / int64 | Query IDs |
-| `cand_id` | $(C,)$ / int64 | Candidate item IDs |
-| `cand_count` | $(C,)$ / int64 | Number of positive training rows for each item |
+| `cand_id` | $(C,)$ / int64 | Document IDs in candidate order |
+| `cand_count` | $(C,)$ / int64 | Number of positive training rows for each document |
 | `cand_source` | $(C,)$ / int64 | 0=in-batch, 1=uniform, 2=extra |
-| `cand_in_corpus` | $(C,)$ / bool | Whether the item can be drawn from the corpus |
-| `num_rows` / `corpus_size` | scalar / int64 | Total training rows $N$ / distinct corpus items $M$ |
+| `cand_in_corpus` | $(C,)$ / bool | Whether the document can be drawn from the corpus |
+| `num_rows` / `corpus_size` | scalar / int64 | Total training rows $N$ / distinct corpus documents $M$ |
 
 These tensors travel in `batch["label"]`; they are not model input features. Loss classes return a scalar mean. `mixed_negative_logq_loss` returns one value per query row, shape $(b,)$. For a chunk, `rows` identifies the original batch rows and their positive candidate columns.
 
