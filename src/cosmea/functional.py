@@ -4,8 +4,8 @@
 these b query rows to the full batch. Corrections follow temperature scaling.
 
 The partition estimators assume uniform sampling of B training rows without
-replacement and K distinct corpus items without replacement, independently.
-With positive-item masking and no query-dependent filtering, each estimator
+replacement and K distinct corpus documents without replacement, independently.
+With positive-document masking and no query-dependent filtering, each estimator
 is unbiased over its proposal support (the pooled union or an individual source).
 This does NOT make its log, normalized probabilities, or gradient unbiased.
 
@@ -20,6 +20,8 @@ import math
 from typing import Literal
 
 import torch
+
+from cosmea._compat import renamed_option
 from torch import Tensor
 
 Variant = Literal["yi", "plugin", "improved"]
@@ -36,8 +38,36 @@ def resolve_combine(combine: Combine, variant: Variant) -> Combine:
     return combine
 
 
-def resolve_mask_same_item(mask_same_item: bool | None, variant: str) -> bool:
-    return variant != "yi" if mask_same_item is None else mask_same_item
+def resolve_logq_strengths(
+    logq_strength: float,
+    in_batch_logq_strength: float | None,
+    uniform_logq_strength: float | None,
+    combine: Combine,
+) -> tuple[float, float]:
+    """Resolve source overrides after resolving the combination mode."""
+    for name, strength in (
+        ("logq_strength", logq_strength),
+        ("in_batch_logq_strength", in_batch_logq_strength),
+        ("uniform_logq_strength", uniform_logq_strength),
+    ):
+        if strength is not None and (not math.isfinite(strength) or strength < 0):
+            raise ValueError(f"{name} must be finite and non-negative.")
+    if combine != "separate" and (in_batch_logq_strength is not None or uniform_logq_strength is not None):
+        raise ValueError('Source-specific logQ strengths require combine="separate".')
+    return (
+        logq_strength if in_batch_logq_strength is None else in_batch_logq_strength,
+        logq_strength if uniform_logq_strength is None else uniform_logq_strength,
+    )
+
+
+def _uniform_probability(draws: int, corpus_size: int) -> float:
+    if draws and not 0 < draws <= corpus_size:
+        raise ValueError("Uniform sampling requires 0 < K <= corpus_size.")
+    return draws / corpus_size if draws else 0.0
+
+
+def resolve_mask_same_document(mask_same_document: bool | None, variant: str) -> bool:
+    return variant != "yi" if mask_same_document is None else mask_same_document
 
 
 def _first_occurrence(ids: Tensor, subset: Tensor) -> Tensor:
@@ -77,7 +107,7 @@ def candidate_log_q(
 
     With ``rows``: shape (b, C), conditioned on each row being present; its
     positive occurrence is removed from the N-1 available training rows.
-    Without ``rows``: shape (C,), suitable for items distinct from the positive.
+    Without ``rows``: shape (C,), suitable for documents distinct from the positive.
     ``iid_proposal=True`` uses count/N and binomial inclusion instead, for the
     ranking-NCE approximation. SOURCE_OTHER has log q=0 (uncorrected heuristic).
     Zero support is represented by -inf, never an invented epsilon probability.
@@ -88,8 +118,7 @@ def candidate_log_q(
     total, corpus = int(label["num_rows"]), int(label["corpus_size"])
     if total < batch_size or batch_size < 1:
         raise ValueError("Expected 1 <= batch size <= num_rows for random row sampling.")
-    if k and not 0 < k <= corpus:
-        raise ValueError("Uniform sampling requires 0 < K <= corpus_size.")
+    uniform_q = _uniform_probability(k, corpus)
 
     # float64 preserves finite-population probabilities even for large row counts.
     count = label["cand_count"].detach().to(torch.float64)
@@ -104,7 +133,7 @@ def candidate_log_q(
 
     population = total if iid_proposal else total - 1
     count = count.clamp(max=max(population, 0))
-    q_un = label["cand_in_corpus"].to(torch.float64) * (k / corpus if k else 0.0)
+    q_un = label["cand_in_corpus"].to(torch.float64) * uniform_q
 
     if q_measure == "expected_count":
         q_in = n * count / max(population, 1)
@@ -126,7 +155,7 @@ def candidate_log_q(
 def known_positive_mask(
     label: dict[str, Tensor],
     rows: Tensor,
-    mask_same_item: bool,
+    mask_same_document: bool,
     mask_same_query: bool,
 ) -> Tensor:
     """Mask the own column and optional known-positive matches, shape (b, C).
@@ -138,7 +167,7 @@ def known_positive_mask(
     b, c = query_id.numel(), cand_id.numel()
     own = torch.zeros(rows.numel(), c, dtype=torch.bool, device=cand_id.device)
     own[torch.arange(rows.numel(), device=cand_id.device), rows] = True
-    if not mask_same_item and not mask_same_query:
+    if not mask_same_document and not mask_same_query:
         return own
 
     if mask_same_query:
@@ -146,7 +175,7 @@ def known_positive_mask(
     else:
         same_query = own[:, :b]
 
-    if mask_same_item:
+    if mask_same_document:
         # Keep memory proportional to the chunk, not the full B-by-C batch.
         mask = cand_id[rows, None] == cand_id[None, :]
         if mask_same_query:
@@ -190,9 +219,10 @@ def negative_log_partition(
     logq_strength: float = 1.0,
     q_measure: QMeasure = "expected_count",
     sources: tuple[int, ...] | None = None,
-    mask_same_item: bool = True,
+    mask_same_document: bool | None = None,
     mask_same_query: bool = True,
     iid_proposal: bool = False,
+    mask_same_item: bool | None = None,
 ) -> Tensor:
     """Log corrected negative sum per row; -inf when a row has no negatives.
 
@@ -215,7 +245,11 @@ def negative_log_partition(
     for s in sources or ():
         subset |= source == s
 
-    valid = subset[None, :] & ~known_positive_mask(label, rows, mask_same_item, mask_same_query)
+    mask_same_document = renamed_option(mask_same_document, mask_same_item, "mask_same_document", "mask_same_item")
+    if mask_same_document is None:
+        mask_same_document = True
+
+    valid = subset[None, :] & ~known_positive_mask(label, rows, mask_same_document, mask_same_query)
     if q_measure == "inclusion":
         valid = torch.stack(
             [
@@ -227,9 +261,17 @@ def negative_log_partition(
     if logq_strength == 0:
         adjusted = scores
     else:
-        log_q = candidate_log_q(label, q_measure, sources is not None, rows=rows, iid_proposal=iid_proposal).to(
-            scores.dtype
-        )
+        if q_measure not in ("expected_count", "inclusion"):
+            raise ValueError(f"Unknown q_measure {q_measure!r}")
+        if sources == (SOURCE_UNIFORM,):
+            # Distinct corpus draws have the same expected count and inclusion probability.
+            # This proposal depends only on the corpus, regardless of the row sampler.
+            draws = int((source == SOURCE_UNIFORM).sum())
+            uniform_q = _uniform_probability(draws, int(label["corpus_size"]))
+            log_q = (label["cand_in_corpus"].to(torch.float64) * uniform_q).log()
+        else:
+            log_q = candidate_log_q(label, q_measure, sources is not None, rows=rows, iid_proposal=iid_proposal)
+        log_q = log_q.to(scores.dtype)
         if ((~torch.isfinite(log_q)) & valid).any():
             raise ValueError("A negative has zero proposal support; check frequency, corpus IDs and sampling design.")
         adjusted = scores - logq_strength * torch.where(valid, log_q, torch.zeros_like(log_q))
@@ -249,10 +291,13 @@ def mixed_negative_logq_loss(
     rows: Tensor | None = None,
     variant: Variant = "yi",
     logq_strength: float = 1.0,
+    in_batch_logq_strength: float | None = None,
+    uniform_logq_strength: float | None = None,
     q_measure: QMeasure = "expected_count",
     combine: Combine = "auto",
-    mask_same_item: bool | None = None,
+    mask_same_document: bool | None = None,
     mask_same_query: bool = True,
+    mask_same_item: bool | None = None,
 ) -> Tensor:
     """Return (b,) losses for already temperature-scaled scores of shape (b,C).
 
@@ -261,6 +306,8 @@ def mixed_negative_logq_loss(
     improved: stop-gradient confidence-weighted adaptation, same first derivative
         as plugin, different scalar values and higher-order derivatives.
     separate: average active in-batch, uniform and uncorrected extra objectives.
+        Each sampled source uses logq_strength unless its source override is set.
+        A zero override skips the proposal calculation for that source.
     pooled: one softmax; expected counts combine via multiple importance sampling.
     No configuration is a general causal popularity/selection debiasing method.
     """
@@ -268,8 +315,6 @@ def mixed_negative_logq_loss(
         raise ValueError(f"Unknown variant {variant!r}")
     if q_measure not in ("expected_count", "inclusion"):
         raise ValueError(f"Unknown q_measure {q_measure!r}")
-    if not math.isfinite(logq_strength) or logq_strength < 0:
-        raise ValueError("logq_strength must be finite and non-negative.")
     if scores.ndim != 2 or not scores.is_floating_point():
         raise ValueError("scores must be a floating (b, C) matrix.")
 
@@ -283,56 +328,57 @@ def mixed_negative_logq_loss(
     combine = resolve_combine(combine, variant)
     if combine not in ("separate", "pooled"):
         raise ValueError(f"Unknown combine {combine!r}")
-    mask_same_item = resolve_mask_same_item(mask_same_item, variant)
+    in_batch_strength, uniform_strength = resolve_logq_strengths(
+        logq_strength, in_batch_logq_strength, uniform_logq_strength, combine
+    )
+    mask_same_document = renamed_option(mask_same_document, mask_same_item, "mask_same_document", "mask_same_item")
+    mask_same_document = resolve_mask_same_document(mask_same_document, variant)
     if variant == "yi" and q_measure == "inclusion":
         raise ValueError("yi + inclusion has no supported ranking-NCE interpretation; use expected_count or plugin.")
     pos = scores[torch.arange(rows.numel(), device=scores.device), rows]
     k = int((label["cand_source"] == SOURCE_UNIFORM).sum())
 
-    def partition(sources: tuple[int, ...] | None) -> Tensor:
+    def partition(sources: tuple[int, ...] | None, strength: float) -> Tensor:
         return negative_log_partition(
             scores,
             label,
             sources=sources,
             rows=rows,
-            logq_strength=logq_strength,
+            logq_strength=strength,
             q_measure=q_measure,
-            mask_same_item=mask_same_item,
+            mask_same_document=mask_same_document,
             mask_same_query=mask_same_query,
             iid_proposal=variant == "yi",
         )
 
-    def positive_log_q(per_source: bool) -> Tensor:
-        if variant != "yi" or logq_strength == 0 or (b == 1 and k == 0):
+    def positive_log_q(strength: float, *, per_source: bool) -> Tensor:
+        if variant != "yi" or strength == 0 or (b == 1 and k == 0):
             # With no sampled negatives, pooled extras form an ordinary softmax.
             return torch.zeros_like(pos)
-        return logq_strength * candidate_log_q(label, q_measure, per_source, iid_proposal=True)[rows].to(scores.dtype)
+        return strength * candidate_log_q(label, q_measure, per_source, iid_proposal=True)[rows].to(scores.dtype)
 
     if combine == "pooled":
-        log_z = partition(None)
-        pos_q = positive_log_q(False)
+        log_z = partition(None, logq_strength)
+        pos_q = positive_log_q(logq_strength, per_source=False)
         if variant == "yi" and (~torch.isfinite(pos_q) & torch.isfinite(log_z)).any():
             raise ValueError("Positive has zero proposal support.")
         return _loss_from_parts(pos, log_z, pos_q, variant)
 
-    groups: list[tuple[int, ...]] = [(SOURCE_IN_BATCH,)]
+    groups = [(SOURCE_IN_BATCH, in_batch_strength)]
     if k:
-        groups.append((SOURCE_UNIFORM,))
+        groups.append((SOURCE_UNIFORM, uniform_strength))
     if (label["cand_source"] == SOURCE_OTHER).any():
-        groups.append((SOURCE_OTHER,))
+        groups.append((SOURCE_OTHER, 0.0))
 
     losses, active = [], []
-    for group in groups:
-        log_z = partition(group)
-        if group == (SOURCE_OTHER,):
-            # Unknown mining proposals cannot define a positive logQ correction.
-            pos_q = torch.zeros_like(pos)
-        elif group == (SOURCE_UNIFORM,) and variant == "yi" and logq_strength:
+    for source, strength in groups:
+        log_z = partition((source,), strength)
+        if source == SOURCE_UNIFORM and variant == "yi" and strength:
             if not label["cand_in_corpus"][rows].all():
                 raise ValueError("yi + separate requires every positive ID in the uniform corpus.")
-            pos_q = pos.new_full(pos.shape, logq_strength * math.log(k / int(label["corpus_size"])))
+            pos_q = pos.new_full(pos.shape, strength * math.log(_uniform_probability(k, int(label["corpus_size"]))))
         else:
-            pos_q = positive_log_q(True)
+            pos_q = positive_log_q(strength, per_source=True)
         if variant == "yi" and (~torch.isfinite(pos_q) & torch.isfinite(log_z)).any():
             raise ValueError("Positive has zero proposal support.")
         losses.append(_loss_from_parts(pos, log_z, pos_q, variant))

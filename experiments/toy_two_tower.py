@@ -1,4 +1,4 @@
-"""Synthetic two-tower experiment with a known ground truth p(item | query).
+"""Synthetic two-tower experiment with a known ground truth p(document | query).
 
 Purpose: check, with exact metrics, what each loss configuration converges to at a *finite*
 batch size. It drives the functional core (`cosmea.functional.mixed_negative_logq_loss`)
@@ -6,17 +6,17 @@ with a free embedding-table two-tower model; no pretrained model is downloaded.
 
 World
 -----
-* M items with Zipf popularity, U queries, true logits  g(u, d) = <x_u, y_d> + log pop(d).
-* Click log: N rows, u uniform, d ~ softmax(g(u, .)). Tail items end up with zero clicks, which
+* M documents with Zipf popularity, U queries, true logits  g(u, d) = <x_u, y_d> + log pop(d).
+* Click log: N rows, u uniform, d ~ softmax(g(u, .)). Tail documents end up with zero clicks, which
   is a finite-sample coverage limitation; no causal exposure policy is simulated.
 * Model: dot product of dim-`rank` embeddings (default) or scale * cosine (`--cosine`).
 
 Metrics (exact expectations under the true distribution, no sampled evaluation)
 * KL:      mean_u KL(p(.|u) || softmax(f(u, .)))                (lower is better; target of lambda=1)
 * R@k:     expected recall@k of a fresh click
-* tailR@k: the same, restricted to clicks on items outside the top 10% by popularity
+* tailR@k: the same, restricted to clicks on documents outside the top 10% by popularity
 * ipwR@10: recall@10 with clicks weighted by 1/pop(d) (a popularity-debiased test set)
-* unseen@10: share of top-10 slots taken by items that have no click in the log
+* unseen@10: share of top-10 slots taken by documents that have no click in the log
 
     python experiments/toy_two_tower.py --seeds 3
 """
@@ -43,7 +43,7 @@ CONFIGS = {
     "full softmax (reference)": None,
     "in-batch, no correction": (0, dict(logq_strength=0.0, combine="pooled")),
     "in-batch, yi": (0, dict(variant="yi")),
-    "in-batch, yi, hits masked": (0, dict(variant="yi", mask_same_item=True)),
+    "in-batch, yi, hits masked": (0, dict(variant="yi", mask_same_document=True)),
     "in-batch, plugin (=improved)": (0, dict(variant="plugin")),
     "MNS, no correction": (1, dict(logq_strength=0.0, combine="pooled")),
     "MNS, yi, separate": (1, dict(variant="yi", combine="separate")),
@@ -59,20 +59,20 @@ CONFIGS = {
 
 def make_world(args, seed):
     rng = np.random.default_rng(seed)
-    pop = 1.0 / np.arange(1, args.items + 1) ** args.zipf
+    pop = 1.0 / np.arange(1, args.documents + 1) ** args.zipf
     pop /= pop.sum()
 
     x = rng.normal(0, 1.0, (args.queries, args.true_rank))
-    y = rng.normal(0, 1.0, (args.items, args.true_rank))
+    y = rng.normal(0, 1.0, (args.documents, args.true_rank))
     logits = x @ y.T * args.affinity + np.log(pop)[None, :]
     p = np.exp(logits - logits.max(1, keepdims=True))
     p /= p.sum(1, keepdims=True)
 
     row_query = rng.integers(0, args.queries, args.rows)
     cdf = p.cumsum(1)
-    row_item = (rng.random(args.rows)[:, None] > cdf[row_query]).sum(1).clip(max=args.items - 1)
+    row_document = (rng.random(args.rows)[:, None] > cdf[row_query]).sum(1).clip(max=args.documents - 1)
 
-    return pop, p, row_query, row_item
+    return pop, p, row_query, row_document
 
 
 class TwoTower(torch.nn.Module):
@@ -80,11 +80,11 @@ class TwoTower(torch.nn.Module):
         super().__init__()
         g = torch.Generator().manual_seed(seed)
         self.q = torch.nn.Parameter(torch.randn(args.queries, args.rank, generator=g) * 0.1)
-        self.d = torch.nn.Parameter(torch.randn(args.items, args.rank, generator=g) * 0.1)
+        self.d = torch.nn.Parameter(torch.randn(args.documents, args.rank, generator=g) * 0.1)
         self.cosine, self.scale = args.cosine, args.scale
 
-    def scores(self, query_index, item_index):
-        q, d = self.q[query_index], self.d[item_index]
+    def scores(self, query_index, document_index):
+        q, d = self.q[query_index], self.d[document_index]
         if self.cosine:
             q, d = torch.nn.functional.normalize(q, dim=-1), torch.nn.functional.normalize(d, dim=-1)
             return q @ d.T * self.scale
@@ -95,13 +95,13 @@ class TwoTower(torch.nn.Module):
 
 
 def evaluate(model, pop, p, counts):
-    """Evaluate full-corpus ranks; ties in popularity use original item order.
+    """Evaluate full-corpus ranks; ties in popularity use original document order.
 
-    The head is exactly ceil(10% of items), leaving a nonempty tail for M >= 2.
+    The head is exactly ceil(10% of documents), leaving a nonempty tail for M >= 2.
     Top-k metrics use at most M slots when the corpus is smaller than k.
     """
     if len(pop) < 2:
-        raise ValueError("Evaluation requires at least two items to define a tail.")
+        raise ValueError("Evaluation requires at least two documents to define a tail.")
 
     with torch.no_grad():
         f = model.all_scores().double()
@@ -126,33 +126,35 @@ def evaluate(model, pop, p, counts):
     return out
 
 
-def train(name, args, seed, pop, p, row_query, row_item):
+def train(name, args, seed, pop, p, row_query, row_document):
     config = CONFIGS[name]
     torch.manual_seed(seed)
     model = TwoTower(args, seed)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    counts = np.bincount(row_item, minlength=args.items)
+    counts = np.bincount(row_document, minlength=args.documents)
     counts_t = torch.tensor(counts, dtype=torch.int64)
-    rq, ri = torch.tensor(row_query), torch.tensor(row_item)
+    query_ids, document_ids = torch.tensor(row_query), torch.tensor(row_document)
     rng = np.random.default_rng(seed + 1)
     steps = args.epochs * (args.rows // args.batch_size)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: 1.0 - 0.9 * s / steps)
-    all_items = torch.arange(args.items)
+    all_documents = torch.arange(args.documents)
 
     for epoch in range(args.epochs):
         perm = torch.tensor(rng.permutation(args.rows))
         for start in range(0, args.rows - args.batch_size + 1, args.batch_size):
             rows = perm[start : start + args.batch_size]
             if config is None:
-                loss = torch.nn.functional.cross_entropy(model.scores(rq[rows], all_items), ri[rows])
+                loss = torch.nn.functional.cross_entropy(
+                    model.scores(query_ids[rows], all_documents), document_ids[rows]
+                )
             else:
                 factor, kwargs = config
                 num_uniform = factor * args.batch_size
-                uniform = torch.tensor(rng.choice(args.items, size=num_uniform, replace=False), dtype=torch.long)
-                cand = torch.cat([ri[rows], uniform])
+                uniform = torch.tensor(rng.choice(args.documents, size=num_uniform, replace=False), dtype=torch.long)
+                cand = torch.cat([document_ids[rows], uniform])
                 label = {
-                    "query_id": rq[rows],
+                    "query_id": query_ids[rows],
                     "cand_id": cand,
                     "cand_count": counts_t[cand],
                     "cand_in_corpus": torch.ones_like(cand, dtype=torch.bool),
@@ -163,11 +165,11 @@ def train(name, args, seed, pop, p, row_query, row_item):
                         ]
                     ),
                     "num_rows": torch.tensor(args.rows),
-                    "corpus_size": torch.tensor(args.items),
+                    "corpus_size": torch.tensor(args.documents),
                 }
-                scores = model.scores(rq[rows], cand)
+                scores = model.scores(query_ids[rows], cand)
                 if kwargs.get("per_draw"):
-                    log_z = negative_log_partition(scores, label, mask_same_item=True) + math.log(len(cand) - 1)
+                    log_z = negative_log_partition(scores, label, mask_same_document=True) + math.log(len(cand) - 1)
                     pos = scores.diagonal()
                     loss = (torch.logaddexp(pos, log_z) - pos).mean()
                 else:
@@ -186,8 +188,8 @@ def validate_args(parser, args, names):
     for name in ("queries", "rows", "true_rank", "rank", "batch_size", "epochs", "seeds"):
         if getattr(args, name) < 1:
             parser.error(f"--{name.replace('_', '-')} must be positive")
-    if args.items < 2:
-        parser.error("--items must be at least 2 to define tail metrics")
+    if args.documents < 2:
+        parser.error("--documents must be at least 2 to define tail metrics")
     if args.rows < args.batch_size:
         parser.error("--rows must be at least --batch-size")
     for name in ("zipf", "affinity", "lr", "scale"):
@@ -200,14 +202,14 @@ def validate_args(parser, args, names):
         if name not in CONFIGS:
             parser.error(f"Unknown configuration: {name}")
         config = CONFIGS[name]
-        if config is not None and config[0] * args.batch_size > args.items:
-            parser.error("Uniform negative count must not exceed --items; reduce --batch-size")
+        if config is not None and config[0] * args.batch_size > args.documents:
+            parser.error("Uniform negative count must not exceed --documents; reduce --batch-size")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--queries", type=int, default=400)
-    parser.add_argument("--items", type=int, default=2000)
+    parser.add_argument("--documents", "--items", type=int, default=2000)
     parser.add_argument("--rows", type=int, default=40000)
     parser.add_argument("--zipf", type=float, default=1.0)
     parser.add_argument("--affinity", type=float, default=1.0)
@@ -228,16 +230,16 @@ def main():
 
     results = {name: [] for name in names}
     for seed in range(args.seeds):
-        pop, p, row_query, row_item = make_world(args, seed)
-        unseen = (np.bincount(row_item, minlength=args.items) == 0).mean()
+        pop, p, row_query, row_document = make_world(args, seed)
+        unseen = (np.bincount(row_document, minlength=args.documents) == 0).mean()
         for name in names:
             start = time.time()
-            results[name].append(train(name, args, seed, pop, p, row_query, row_item))
+            results[name].append(train(name, args, seed, pop, p, row_query, row_document))
             print(f"seed {seed} {name:40s} {time.time() - start:5.1f}s {results[name][-1]}", flush=True)
 
     print(
         f"\nmodel: {'cosine x %g' % args.scale if args.cosine else 'dot product'}; "
-        f"items without clicks: {unseen:.1%}; mean +- std over {args.seeds} seeds\n"
+        f"documents without clicks: {unseen:.1%}; mean +- std over {args.seeds} seeds\n"
     )
     metrics = ["KL", "R@10", "R@100", "tailR@10", "tailR@100", "ipwR@10", "unseen@10"]
     print("| config | " + " | ".join(metrics) + " |")

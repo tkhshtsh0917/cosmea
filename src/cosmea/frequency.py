@@ -1,7 +1,7 @@
-"""Item identity and item-frequency bookkeeping.
+"""Document identity and document-frequency bookkeeping.
 
-The proposal distribution of in-batch negatives is the empirical distribution of *positive items*
-in the training set, so everything the logQ correction needs is a count per item. For a finite
+The proposal distribution of in-batch negatives is the empirical distribution of *positive documents*
+in the training set, so everything the logQ correction needs is a count per document. For a finite
 `datasets.Dataset` those counts are exact; no streaming estimator is required.
 """
 
@@ -13,6 +13,8 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+from cosmea._compat import renamed_option
 
 
 def stable_id(value: Any) -> int:
@@ -33,11 +35,11 @@ def stable_id(value: Any) -> int:
 
 
 @dataclass
-class ItemFrequency:
-    """Exact count of how often each item occurs as a positive in the training set.
+class DocumentFrequency:
+    """Exact count of how often each document occurs as a positive in the training set.
 
     Attributes:
-        counts: item id -> number of training rows whose positive is that item.
+        counts: document id -> number of training rows whose positive is that document.
         num_rows: number of training rows N.
     """
 
@@ -52,15 +54,21 @@ class ItemFrequency:
             or sum(self.counts.values()) != self.num_rows
         ):
             raise ValueError("Frequency requires positive integer counts summing to num_rows > 0.")
-        for item_id in self.counts:
-            if not isinstance(item_id, numbers.Integral):
+        for document_id in self.counts:
+            if not isinstance(document_id, numbers.Integral):
                 raise TypeError("counts keys must be stable integer IDs; use from_ids for raw IDs.")
-            stable_id(item_id)
+            stable_id(document_id)
 
     @classmethod
-    def from_ids(cls, item_ids: Iterable[Any]) -> ItemFrequency:
+    def from_ids(
+        cls, document_ids: Iterable[Any] | None = None, *, item_ids: Iterable[Any] | None = None
+    ) -> DocumentFrequency:
         """Consume raw IDs once; reject an empty collection or unsupported ID values."""
-        counter: Counter[int] = Counter(stable_id(item) for item in item_ids)
+        ids = renamed_option(document_ids, item_ids, "document_ids", "item_ids")
+        if ids is None:
+            raise TypeError("from_ids requires document_ids.")
+
+        counter: Counter[int] = Counter(stable_id(document) for document in ids)
         return cls(counts=dict(counter), num_rows=sum(counter.values()))
 
     @classmethod
@@ -68,19 +76,28 @@ class ItemFrequency:
         cls,
         dataset: Any,
         positive_column: str = "positive",
+        document_id_column: str | None = None,
+        *,
         item_id_column: str | None = None,
-    ) -> ItemFrequency:
+    ) -> DocumentFrequency:
         """Count positives of a ``datasets.Dataset`` (or anything indexable by column name).
 
-        If ``item_id_column`` is given, items are identified by that column (recommended when the
-        same item can have several text renderings); otherwise by the hash of the positive text.
+        If ``document_id_column`` is given, documents are identified by that column (recommended when the
+        same document can have several text renderings); otherwise by the hash of the positive text.
         """
-        column: Sequence[Any] = dataset[item_id_column or positive_column]
+        id_column = renamed_option(document_id_column, item_id_column, "document_id_column", "item_id_column")
+        column: Sequence[Any] = dataset[id_column or positive_column]
         return cls.from_ids(column)
 
-    def count(self, item_id: int) -> int:
+    def count(self, document_id: int | None = None, *, item_id: int | None = None) -> int:
         """Return a stable integer ID's count, or zero when it is outside the log."""
-        return self.counts.get(item_id, 0)
+        resolved_id = renamed_option(document_id, item_id, "document_id", "item_id")
+        if resolved_id is None:
+            raise TypeError("count requires a document_id.")
+        return self.counts.get(resolved_id, 0)
 
     def __len__(self) -> int:
         return len(self.counts)
+
+
+ItemFrequency = DocumentFrequency

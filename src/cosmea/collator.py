@@ -4,10 +4,10 @@ In Sentence Transformers the training DataLoader is built by the trainer; the co
 ``collate_fn`` of that DataLoader and the one place that sees the raw texts of a whole batch.
 This collator therefore does the two things the loss cannot do by itself:
 
-1. **Mixed Negative Sampling**: draw ``K`` items uniformly from the
+1. **Mixed Negative Sampling**: draw ``K`` documents uniformly from the
    serving corpus and append them as an extra candidate column that is shared by every query in
-   the batch. This is what lets items that never occur as a positive act as negatives.
-2. **logQ metadata**: attach, for every candidate, its item id, its training-set frequency and
+   the batch. This is what lets documents that never occur as a positive act as negatives.
+2. **logQ metadata**: attach, for every candidate, its document id, its training-set frequency and
    whether it is in the corpus, so the loss can compute the correct proposal probability.
 
 The metadata travels in ``batch["label"]`` as a dict of tensors, the only channel the trainer
@@ -28,7 +28,8 @@ import numpy as np
 import torch
 from sentence_transformers.sentence_transformer.data_collator import SentenceTransformerDataCollator
 
-from cosmea.frequency import ItemFrequency, stable_id
+from cosmea._compat import renamed_option
+from cosmea.frequency import DocumentFrequency, stable_id
 from cosmea.functional import SOURCE_IN_BATCH, SOURCE_OTHER, SOURCE_UNIFORM
 
 logger = logging.getLogger(__name__)
@@ -40,18 +41,18 @@ class MixedNegativeDataCollator(SentenceTransformerDataCollator):
 
     Args:
         preprocess_fn: ``model.preprocess`` (as for the stock collator).
-        item_frequency: counts of the training positives, ``ItemFrequency.from_dataset(...)``.
+        document_frequency: counts of the training positives, ``DocumentFrequency.from_dataset(...)``.
             Must be built from the *training* split with the same id convention.
         corpus: texts of the serving corpus to sample uniform negatives from. Should cover
-            everything that can be retrieved at serving time, including items without feedback.
-        corpus_ids: optional item ids aligned with ``corpus``; defaults to the hash of each text.
+            everything that can be retrieved at serving time, including documents without feedback.
+        corpus_ids: optional document ids aligned with ``corpus``; defaults to the hash of each text.
         num_uniform: number K of uniform negatives added to every batch (0 = logQ only).
-        query_id_column / item_id_column: optional dataset columns holding ids for the anchor and
+        query_id_column / document_id_column: optional dataset columns holding ids for the anchor and
             the positive. They are removed before tokenization. Without them, ids are text hashes,
-            so two different texts of one item are treated as different items.
+            so two different texts of one document are treated as different documents.
         uniform_column: name of the appended candidate column.
-        extra_item_id_columns: extra text column -> ID column mapping; required for each
-            extra column when ``item_id_column`` is set.
+        extra_document_id_columns: extra text column -> ID column mapping; required for each
+            extra column when ``document_id_column`` is set.
         prompts / router_mapping / max_length: inherited preprocessing settings.
             Pass them here, not only to TrainingArguments: a custom collator does
             not inherit the trainer's settings. Uniforms reuse the positive settings.
@@ -60,19 +61,24 @@ class MixedNegativeDataCollator(SentenceTransformerDataCollator):
     ``MultipleNegativesRankingLoss``. Further text columns (e.g. mined hard negatives) are kept as
     candidates but are not treated as samples from a known distribution: they get no correction.
 
-    The item counts assume batches are a uniform random sample of the training rows (the default
+    The document counts assume batches are a uniform random sample of the training rows (the default
     ``BatchSamplers.BATCH_SAMPLER``). With ``NO_DUPLICATES`` or grouped samplers the in-batch
     proposal is no longer frequency-proportional and the correction becomes approximate.
     """
 
-    item_frequency: ItemFrequency | None = field(default=None, repr=False)
+    document_frequency: DocumentFrequency | None = field(default=None, repr=False)
     corpus: Sequence[str] | None = field(default=None, repr=False)
     corpus_ids: Sequence[Any] | None = field(default=None, repr=False)
     num_uniform: int = 0
     query_id_column: str | None = None
-    item_id_column: str | None = None
-    extra_item_id_columns: dict[str, str] = field(default_factory=dict)
+    document_id_column: str | None = None
+    extra_document_id_columns: dict[str, str] | None = None
     uniform_column: str = "uniform_negative"
+
+    # Keep the old keywords so existing training scripts can migrate independently.
+    item_frequency: DocumentFrequency | None = field(default=None, kw_only=True, repr=False)
+    item_id_column: str | None = field(default=None, kw_only=True, repr=False)
+    extra_item_id_columns: dict[str, str] | None = field(default=None, kw_only=True, repr=False)
 
     _corpus_positions: np.ndarray | None = field(default=None, init=False, repr=False)
     _corpus_unique_ids: np.ndarray | None = field(default=None, init=False, repr=False)
@@ -81,8 +87,12 @@ class MixedNegativeDataCollator(SentenceTransformerDataCollator):
     _rng_pid: int | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.item_frequency is None:
-            raise ValueError("item_frequency is required: build it with ItemFrequency.from_dataset(train_dataset).")
+        self._get_document_id_column()
+        self._get_extra_document_id_columns()
+        if self._get_document_frequency() is None:
+            raise ValueError(
+                "document_frequency is required: build it with DocumentFrequency.from_dataset(train_dataset)."
+            )
         if not isinstance(self.num_uniform, int) or self.num_uniform < 0:
             raise ValueError("num_uniform must be >= 0.")
         if self.num_uniform > 0 and self.corpus is None:
@@ -96,7 +106,7 @@ class MixedNegativeDataCollator(SentenceTransformerDataCollator):
             else:
                 ids = np.fromiter((stable_id(t) for t in self.corpus), dtype=np.int64, count=len(self.corpus))
 
-            # Sample over distinct items: a duplicated corpus entry would otherwise be drawn twice
+            # Sample over distinct documents: a duplicated corpus entry would otherwise be drawn twice
             # as often as the "uniform" proposal claims.
             unique_ids, first_positions = np.unique(ids, return_index=True)
             order = np.argsort(first_positions)
@@ -105,12 +115,29 @@ class MixedNegativeDataCollator(SentenceTransformerDataCollator):
             self._corpus_id_set = frozenset(int(i) for i in unique_ids)
             if len(unique_ids) < len(ids):
                 logger.warning(
-                    "Corpus has %d entries but %d distinct item ids; sampling over distinct items.",
+                    "Corpus has %d entries but %d distinct document ids; sampling over distinct documents.",
                     len(ids),
                     len(unique_ids),
                 )
             if self.num_uniform > len(unique_ids):
                 raise ValueError(f"num_uniform={self.num_uniform} exceeds the corpus size {len(unique_ids)}.")
+
+    def _get_document_frequency(self) -> DocumentFrequency | None:
+        return renamed_option(self.document_frequency, self.item_frequency, "document_frequency", "item_frequency")
+
+    def _get_document_id_column(self) -> str | None:
+        return renamed_option(self.document_id_column, self.item_id_column, "document_id_column", "item_id_column")
+
+    def _get_extra_document_id_columns(self) -> dict[str, str]:
+        return (
+            renamed_option(
+                self.extra_document_id_columns,
+                self.extra_item_id_columns,
+                "extra_document_id_columns",
+                "extra_item_id_columns",
+            )
+            or {}
+        )
 
     @property
     def corpus_size(self) -> int:
@@ -130,7 +157,7 @@ class MixedNegativeDataCollator(SentenceTransformerDataCollator):
     def _ids(self, values: list[Any]) -> list[int]:
         if values and not isinstance(values[0], (str, bytes, numbers.Integral)):
             raise TypeError(
-                "Cannot derive ids from non-text inputs; provide query_id_column / item_id_column in the dataset."
+                "Cannot derive ids from non-text inputs; provide query_id_column / document_id_column in the dataset."
             )
         return [stable_id(v) for v in values]
 
@@ -143,12 +170,14 @@ class MixedNegativeDataCollator(SentenceTransformerDataCollator):
         if not features:
             return {}
 
-        frequency = self.item_frequency
+        frequency = self._get_document_frequency()
         if frequency is None:
-            raise ValueError("item_frequency is required.")
+            raise ValueError("document_frequency is required.")
 
-        id_columns = {c for c in (self.query_id_column, self.item_id_column) if c}
-        id_columns.update(self.extra_item_id_columns.values())
+        document_id_column = self._get_document_id_column()
+        extra_document_id_columns = self._get_extra_document_id_columns()
+        id_columns = {c for c in (self.query_id_column, document_id_column) if c}
+        id_columns.update(extra_document_id_columns.values())
         if any(set(row) != set(features[0]) for row in features):
             raise ValueError("All rows must have the same columns.")
         missing = id_columns - set(features[0])
@@ -165,10 +194,10 @@ class MixedNegativeDataCollator(SentenceTransformerDataCollator):
                 "its sampling metadata. Remove the label column."
             )
         anchor_column, positive_column, *other_columns = text_columns
-        if set(self.extra_item_id_columns) - set(other_columns):
-            raise ValueError("extra_item_id_columns keys must name additional candidate text columns.")
-        if self.item_id_column and set(other_columns) - set(self.extra_item_id_columns):
-            raise ValueError("Explicit item IDs require extra_item_id_columns for every extra text column.")
+        if set(extra_document_id_columns) - set(other_columns):
+            raise ValueError("extra_document_id_columns keys must name additional candidate text columns.")
+        if document_id_column and set(other_columns) - set(extra_document_id_columns):
+            raise ValueError("Explicit document IDs require extra_document_id_columns for every extra text column.")
         if self.uniform_column in text_columns:
             raise ValueError(f"Column name {self.uniform_column!r} is reserved for the uniform negatives.")
 
@@ -181,18 +210,18 @@ class MixedNegativeDataCollator(SentenceTransformerDataCollator):
         else:
             query_ids = self._ids([row[anchor_column] for row in rows])
 
-        if self.item_id_column:
-            positive_ids = [stable_id(row[self.item_id_column]) for row in features]
+        if document_id_column:
+            positive_ids = [stable_id(row[document_id_column]) for row in features]
         else:
             positive_ids = self._ids([row[positive_column] for row in rows])
         if any(frequency.count(i) == 0 for i in positive_ids):
-            raise ValueError("Positive ID absent from item_frequency; check the split and ID convention.")
+            raise ValueError("Positive ID absent from document_frequency; check the split and ID convention.")
 
         cand_ids = list(positive_ids)
         cand_source = [SOURCE_IN_BATCH] * batch_size
         for column in other_columns:
-            if column in self.extra_item_id_columns:
-                cand_ids.extend(stable_id(row[self.extra_item_id_columns[column]]) for row in features)
+            if column in extra_document_id_columns:
+                cand_ids.extend(stable_id(row[extra_document_id_columns[column]]) for row in features)
             else:
                 cand_ids.extend(self._ids([row[column] for row in rows]))
             cand_source.extend([SOURCE_OTHER] * batch_size)

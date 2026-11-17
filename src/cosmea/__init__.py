@@ -3,11 +3,11 @@
 * :class:`MixedNegativeDataCollator` - Mixed Negative Sampling + logQ metadata (collate_fn).
 * :class:`LogQMultipleNegativesRankingLoss` / :class:`CachedLogQMultipleNegativesRankingLoss` -
   InfoNCE with logQ correction over in-batch and uniform negatives.
-* :class:`ItemFrequency` - exact item counts of the training positives.
+* :class:`DocumentFrequency` - exact document counts of the training positives.
 """
 
 from cosmea.collator import MixedNegativeDataCollator
-from cosmea.frequency import ItemFrequency, stable_id
+from cosmea.frequency import DocumentFrequency, ItemFrequency, stable_id
 from cosmea.functional import (
     candidate_log_q,
     mixed_negative_logq_loss,
@@ -17,6 +17,7 @@ from cosmea.losses import CachedLogQMultipleNegativesRankingLoss, LogQMultipleNe
 
 __all__ = [
     "CachedLogQMultipleNegativesRankingLoss",
+    "DocumentFrequency",
     "ItemFrequency",
     "LogQMultipleNegativesRankingLoss",
     "MixedNegativeDataCollator",

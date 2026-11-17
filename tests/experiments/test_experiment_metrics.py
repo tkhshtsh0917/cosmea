@@ -29,7 +29,7 @@ class FixedScores:
 
 def test_tail_starts_immediately_after_top_ten_percent(experiment):
     scores = -np.arange(100, dtype=float)
-    scores[9] = -1000  # Top ten contains nine head items and the first tail item.
+    scores[9] = -1000  # Top ten contains nine head documents and the first tail document.
     popularity = 1 / np.arange(1, 101, dtype=float)
     popularity /= popularity.sum()
     result = experiment.evaluate(FixedScores(scores), popularity, np.full((1, 100), 0.01), np.ones(100))
@@ -51,3 +51,17 @@ def test_unseen_share_uses_actual_number_of_retrieved_slots(experiment):
 
     assert result["unseen@10"] == pytest.approx(1.0)
     assert result["R@10"] == pytest.approx(1.0)
+
+
+def test_diagnostic_corpus_has_declared_size_and_unclicked_documents():
+    path = Path(__file__).resolve().parents[2] / "experiments/diagnostics/estimators.py"
+    spec = importlib.util.spec_from_file_location("cosmea_estimators", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _, counts, in_corpus, scores = module.build_world()
+
+    assert len(scores) == len(counts) == len(in_corpus)
+    assert in_corpus.sum() == module.CORPUS_SIZE == 300
+    assert not in_corpus[200:210].any()
+    assert in_corpus[220:320].all()
+    assert not counts[220:320].any()

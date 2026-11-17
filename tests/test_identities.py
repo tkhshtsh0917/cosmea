@@ -15,18 +15,18 @@ from cosmea.functional import (
 )
 
 
-def make_label(batch_size=12, num_uniform=7, num_other=0, num_items=9, num_queries=6, seed=0):
-    """Random metadata with many duplicate items and repeated queries (the awkward cases)."""
+def make_label(batch_size=12, num_uniform=7, num_other=0, num_documents=9, num_queries=6, seed=0):
+    """Random metadata with many duplicate documents and repeated queries (the awkward cases)."""
     g = torch.Generator().manual_seed(seed)
     num_rows = 500
     corpus_size = 40
-    counts = torch.randint(1, 60, (num_items + corpus_size,), generator=g).float()
-    pos = torch.randint(0, num_items, (batch_size,), generator=g)
-    other = torch.randint(0, num_items + corpus_size, (batch_size * num_other,), generator=g)
-    uni = num_items + torch.randperm(corpus_size, generator=g)[:num_uniform]
+    counts = torch.randint(1, 60, (num_documents + corpus_size,), generator=g).float()
+    pos = torch.randint(0, num_documents, (batch_size,), generator=g)
+    other = torch.randint(0, num_documents + corpus_size, (batch_size * num_other,), generator=g)
+    uni = num_documents + torch.randperm(corpus_size, generator=g)[:num_uniform]
     cand_id = torch.cat([pos, other, uni])
-    # Items >= num_items are corpus-only (count 0 in training) for the uniform part.
-    cand_count = counts[cand_id] * (cand_id < num_items)
+    # Items >= num_documents are corpus-only (count 0 in training) for the uniform part.
+    cand_count = counts[cand_id] * (cand_id < num_documents)
     return {
         "query_id": torch.randint(0, num_queries, (batch_size,), generator=g),
         "cand_id": cand_id,
@@ -121,7 +121,7 @@ def test_strength_zero_without_duplicates_is_plain_infonce():
 
 def test_known_positives_are_masked():
     """An accidental hit must not change the loss, whatever its score."""
-    label = make_label(batch_size=6, num_uniform=4, num_items=3, num_queries=6)
+    label = make_label(batch_size=6, num_uniform=4, num_documents=3, num_queries=6)
     scores = torch.randn(6, label["cand_id"].numel(), dtype=torch.float64)
     pos_id = label["cand_id"][:6]
     hits = pos_id[:, None] == label["cand_id"][None, :]
@@ -129,17 +129,17 @@ def test_known_positives_are_masked():
 
     assert hits.any(), "test set-up should contain accidental hits"
     for variant in ("plugin", "yi", "improved"):
-        a = mixed_negative_logq_loss(scores, label, variant=variant, mask_same_item=True, mask_same_query=False)
+        a = mixed_negative_logq_loss(scores, label, variant=variant, mask_same_document=True, mask_same_query=False)
         b = mixed_negative_logq_loss(
             scores + 50.0 * hits,
             label,
             variant=variant,
-            mask_same_item=True,
+            mask_same_document=True,
             mask_same_query=False,
         )
 
         assert torch.allclose(a, b)
-        c = mixed_negative_logq_loss(scores + 50.0 * hits, label, variant=variant, mask_same_item=False)
+        c = mixed_negative_logq_loss(scores + 50.0 * hits, label, variant=variant, mask_same_document=False)
 
         assert not torch.allclose(a, c)
 

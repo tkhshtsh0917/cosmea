@@ -27,7 +27,7 @@ from transformers import BertConfig, BertModel, PreTrainedTokenizerFast
 
 from cosmea import (
     CachedLogQMultipleNegativesRankingLoss,
-    ItemFrequency,
+    DocumentFrequency,
     LogQMultipleNegativesRankingLoss,
     MixedNegativeDataCollator,
 )
@@ -74,7 +74,7 @@ def build_tiny_model(workdir: Path) -> SentenceTransformer:
 def build_data(seed: int = 0):
     """A click log with Zipf-popular jobs, repeated queries, and jobs that were never clicked."""
     rng = random.Random(seed)
-    jobs = [{"job_id": j, "text": f"job {TOPICS[j % len(TOPICS)]} n{j} in city n{j % 7}"} for j in range(300)]
+    jobs = [{"document_id": j, "text": f"job {TOPICS[j % len(TOPICS)]} n{j} in city n{j % 7}"} for j in range(300)]
     clicked_jobs = jobs[:120]  # the other 180 jobs exist in the corpus but have no feedback
     weights = [1.0 / (rank + 1) for rank in range(len(clicked_jobs))]
 
@@ -82,13 +82,13 @@ def build_data(seed: int = 0):
     for _ in range(1200):
         job = rng.choices(clicked_jobs, weights=weights)[0]
         user = rng.randrange(60)
-        topic = TOPICS[job["job_id"] % len(TOPICS)]
+        topic = TOPICS[job["document_id"] % len(TOPICS)]
         rows.append(
             {
-                "query": f"query {topic} n{user}",
-                "job": job["text"],
-                "query_id": user * 100 + job["job_id"] % len(TOPICS),
-                "job_id": job["job_id"],
+                "anchor": f"query {topic} n{user}",
+                "positive": job["text"],
+                "query_id": user * 100 + job["document_id"] % len(TOPICS),
+                "document_id": job["document_id"],
             }
         )
 
@@ -99,10 +99,10 @@ def build_data(seed: int = 0):
 def recall_at_k(model: SentenceTransformer, eval_dataset: Dataset, jobs: list[dict], k: int = 10) -> float:
     """Recall@k of the clicked job, retrieving from the whole corpus (no sampled negatives)."""
     corpus_embeddings = model.encode([job["text"] for job in jobs], convert_to_tensor=True, normalize_embeddings=True)
-    query_embeddings = model.encode(list(eval_dataset["query"]), convert_to_tensor=True, normalize_embeddings=True)
+    query_embeddings = model.encode(list(eval_dataset["anchor"]), convert_to_tensor=True, normalize_embeddings=True)
 
     top = (query_embeddings @ corpus_embeddings.T).topk(k, dim=1).indices.tolist()
-    hits = sum(job_id in row for job_id, row in zip(eval_dataset["job_id"], top))
+    hits = sum(document_id in row for document_id, row in zip(eval_dataset["document_id"], top))
     return hits / len(eval_dataset)
 
 
@@ -126,17 +126,17 @@ def main() -> None:
         train_dataset, eval_dataset, jobs = build_data()
 
         # 1. Item frequencies of the *training* positives (exact counts).
-        frequency = ItemFrequency.from_dataset(train_dataset, item_id_column="job_id")
+        frequency = DocumentFrequency.from_dataset(train_dataset, document_id_column="document_id")
 
         # 2. Collator: adds uniformly sampled corpus jobs to every batch + the logQ metadata.
         collator = MixedNegativeDataCollator(
             preprocess_fn=model.preprocess,
-            item_frequency=frequency,
+            document_frequency=frequency,
             corpus=[job["text"] for job in jobs],
-            corpus_ids=[job["job_id"] for job in jobs],
+            corpus_ids=[job["document_id"] for job in jobs],
             num_uniform=args.num_uniform,
             query_id_column="query_id",
-            item_id_column="job_id",
+            document_id_column="document_id",
         )
 
         # 3. Loss: temperature-scaled cosine, then the sampling-bias correction.
@@ -163,7 +163,7 @@ def main() -> None:
             save_strategy="no",
             report_to="none",
             dataloader_num_workers=args.workers,
-            # Keep the default random batch sampler: the item counts assume it.
+            # Keep the default random batch sampler: the document counts assume it.
             use_cpu=True,
             seed=0,
         )

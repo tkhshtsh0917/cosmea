@@ -15,13 +15,15 @@ import torch
 from sentence_transformers import util
 from torch import Tensor, nn
 
+from cosmea._compat import renamed_option
 from cosmea.functional import (
     Combine,
     QMeasure,
     Variant,
     mixed_negative_logq_loss,
     resolve_combine,
-    resolve_mask_same_item,
+    resolve_logq_strengths,
+    resolve_mask_same_document,
 )
 
 from sentence_transformers.base.losses.gradcache import CachedLossMixin
@@ -49,8 +51,11 @@ class _LogQConfig:
         logq_strength: float,
         q_measure: QMeasure,
         combine: Combine,
-        mask_same_item: bool | None,
+        mask_same_document: bool | None,
         mask_same_query: bool,
+        *,
+        in_batch_logq_strength: float | None,
+        uniform_logq_strength: float | None,
     ) -> None:
         if not math.isfinite(scale) or not scale > 0:
             raise ValueError("scale must be positive.")
@@ -60,22 +65,32 @@ class _LogQConfig:
             raise ValueError(f"q_measure must be 'expected_count' or 'inclusion', got {q_measure!r}")
         if combine not in ("auto", "pooled", "separate"):
             raise ValueError(f"combine must be 'auto', 'pooled' or 'separate', got {combine!r}")
-        if not math.isfinite(logq_strength) or logq_strength < 0:
-            raise ValueError("logq_strength must be non-negative.")
+        combine = resolve_combine(combine, variant)
+        resolve_logq_strengths(logq_strength, in_batch_logq_strength, uniform_logq_strength, combine)
 
         self.scale = scale
         self.similarity_fct = similarity_fct
         self.variant = variant
         self.logq_strength = logq_strength
+        self.in_batch_logq_strength = in_batch_logq_strength
+        self.uniform_logq_strength = uniform_logq_strength
         self.q_measure = q_measure
-        self.combine = resolve_combine(combine, variant)
-        self.mask_same_item = resolve_mask_same_item(mask_same_item, variant)
+        self.combine = combine
+        self.mask_same_document = resolve_mask_same_document(mask_same_document, variant)
         self.mask_same_query = mask_same_query
 
         if variant == "yi" and q_measure == "inclusion":
             raise ValueError("yi + inclusion is unsupported; use expected_count or plugin.")
 
-    def _row_losses(self, queries: Tensor, candidates: Tensor, labels: dict[str, Tensor], rows: Tensor) -> Tensor:
+    @property
+    def mask_same_item(self) -> bool:
+        return self.mask_same_document
+
+    @mask_same_item.setter
+    def mask_same_item(self, value: bool) -> None:
+        self.mask_same_document = value
+
+    def _row_losses(self, anchors: Tensor, candidates: Tensor, labels: dict[str, Tensor], rows: Tensor) -> Tensor:
         num_candidates = labels["cand_id"].numel()
         if candidates.size(0) != num_candidates:
             raise ValueError(
@@ -83,16 +98,18 @@ class _LogQConfig:
                 "Losses that gather embeddings across devices are not supported."
             )
         # Temperature first, correction second (inside mixed_negative_logq_loss).
-        scores = self.similarity_fct(queries, candidates) * self.scale
+        scores = self.similarity_fct(anchors, candidates) * self.scale
         return mixed_negative_logq_loss(
             scores,
             labels,
             rows=rows,
             variant=self.variant,
             logq_strength=self.logq_strength,
+            in_batch_logq_strength=self.in_batch_logq_strength,
+            uniform_logq_strength=self.uniform_logq_strength,
             q_measure=self.q_measure,
             combine=self.combine,
-            mask_same_item=self.mask_same_item,
+            mask_same_document=self.mask_same_document,
             mask_same_query=self.mask_same_query,
         )
 
@@ -102,9 +119,11 @@ class _LogQConfig:
             "similarity_fct": getattr(self.similarity_fct, "__name__", type(self.similarity_fct).__name__),
             "variant": self.variant,
             "logq_strength": self.logq_strength,
+            "in_batch_logq_strength": self.in_batch_logq_strength,
+            "uniform_logq_strength": self.uniform_logq_strength,
             "q_measure": self.q_measure,
             "combine": self.combine,
-            "mask_same_item": self.mask_same_item,
+            "mask_same_document": self.mask_same_document,
             "mask_same_query": self.mask_same_query,
         }
 
@@ -142,11 +161,13 @@ class LogQMultipleNegativesRankingLoss(_LogQConfig, nn.Module):
         variant: ``"yi"`` (default; iid proposal approximation), ``"plugin"`` or ``"improved"``
             (confidence-weighted objective; same first gradient as "plugin");
             see :func:`cosmea.functional.mixed_negative_logq_loss`.
-        logq_strength: lambda in ``f - lambda * log q``; 0 disables the correction.
+        logq_strength: default lambda in ``f - lambda * log q``; 0 disables correction.
+        in_batch_logq_strength / uniform_logq_strength: per-source overrides for
+            separate losses. None inherits logq_strength.
         q_measure: ``"expected_count"`` (duplicates kept) or ``"inclusion"`` (pool de-duplicated).
         combine: ``"separate"`` or ``"pooled"`` softmax over the negative sources; ``"auto"``
             uses "separate" for "yi" and "pooled" otherwise.
-        mask_same_item: mask accidental hits; ``None`` = keep them for "yi", mask otherwise.
+        mask_same_document: mask accidental hits; ``None`` = keep them for "yi", mask otherwise.
         mask_same_query: mask the positives of other rows that share the row's query.
     """
 
@@ -159,11 +180,16 @@ class LogQMultipleNegativesRankingLoss(_LogQConfig, nn.Module):
         logq_strength: float = 1.0,
         q_measure: QMeasure = "expected_count",
         combine: Combine = "auto",
-        mask_same_item: bool | None = None,
+        mask_same_document: bool | None = None,
         mask_same_query: bool = True,
+        *,
+        in_batch_logq_strength: float | None = None,
+        uniform_logq_strength: float | None = None,
+        mask_same_item: bool | None = None,
     ) -> None:
         super().__init__()
         self.model = model
+        mask_same_document = renamed_option(mask_same_document, mask_same_item, "mask_same_document", "mask_same_item")
         self._init_config(
             scale,
             similarity_fct,
@@ -171,8 +197,10 @@ class LogQMultipleNegativesRankingLoss(_LogQConfig, nn.Module):
             logq_strength,
             q_measure,
             combine,
-            mask_same_item,
+            mask_same_document,
             mask_same_query,
+            in_batch_logq_strength=in_batch_logq_strength,
+            uniform_logq_strength=uniform_logq_strength,
         )
 
     def forward(self, sentence_features: Iterable[dict[str, Tensor]], labels: Any) -> Tensor:
@@ -183,14 +211,14 @@ class LogQMultipleNegativesRankingLoss(_LogQConfig, nn.Module):
         return self.compute_loss_from_embeddings(embeddings, labels)
 
     def compute_loss_from_embeddings(self, embeddings: list[Tensor], labels: dict[str, Tensor]) -> Tensor:
-        """Return mean row loss from query and candidate columns, each shaped (n, dim)."""
+        """Return mean row loss from anchor and candidate columns, each shaped (n, dim)."""
         if len(embeddings) < 2:
             raise ValueError(f"Expected at least 2 embedding columns, got {len(embeddings)}")
 
-        queries = embeddings[0]
+        anchors = embeddings[0]
         candidates = torch.cat(embeddings[1:], dim=0)
-        rows = torch.arange(queries.size(0), device=queries.device)
-        return self._row_losses(queries, candidates, labels, rows).mean()
+        rows = torch.arange(anchors.size(0), device=anchors.device)
+        return self._row_losses(anchors, candidates, labels, rows).mean()
 
 
 class CachedLogQMultipleNegativesRankingLoss(_LogQConfig, CachedLossMixin, nn.Module):
@@ -210,9 +238,13 @@ class CachedLogQMultipleNegativesRankingLoss(_LogQConfig, CachedLossMixin, nn.Mo
         logq_strength: float = 1.0,
         q_measure: QMeasure = "expected_count",
         combine: Combine = "auto",
-        mask_same_item: bool | None = None,
+        mask_same_document: bool | None = None,
         mask_same_query: bool = True,
         show_progress_bar: bool = False,
+        *,
+        in_batch_logq_strength: float | None = None,
+        uniform_logq_strength: float | None = None,
+        mask_same_item: bool | None = None,
     ) -> None:
         super().__init__()
         if not isinstance(mini_batch_size, int) or mini_batch_size < 1:
@@ -221,6 +253,7 @@ class CachedLogQMultipleNegativesRankingLoss(_LogQConfig, CachedLossMixin, nn.Mo
         self.mini_batch_size = mini_batch_size
         self.mini_batch_num_tokens = None
         self.show_progress_bar = show_progress_bar
+        mask_same_document = renamed_option(mask_same_document, mask_same_item, "mask_same_document", "mask_same_item")
         self._init_config(
             scale,
             similarity_fct,
@@ -228,25 +261,27 @@ class CachedLogQMultipleNegativesRankingLoss(_LogQConfig, CachedLossMixin, nn.Mo
             logq_strength,
             q_measure,
             combine,
-            mask_same_item,
+            mask_same_document,
             mask_same_query,
+            in_batch_logq_strength=in_batch_logq_strength,
+            uniform_logq_strength=uniform_logq_strength,
         )
 
     def calculate_loss(self, reps: list[list[Tensor]], labels: Any = None, *, with_backward: bool = False) -> Tensor:
-        """Reduce query chunks over the full candidate pool to a scalar mean loss.
+        """Reduce anchor chunks over the full candidate pool to a scalar mean loss.
 
         With ``with_backward``, accumulate embedding gradients per chunk and return
         the detached loss; otherwise preserve its autograd graph for evaluation.
         """
         labels = _check_labels(labels)
-        queries = torch.cat(reps[0])
+        anchors = torch.cat(reps[0])
         candidates = torch.cat([torch.cat(column) for column in reps[1:]], dim=0)
-        batch_size = queries.size(0)
+        batch_size = anchors.size(0)
         losses: list[Tensor] = []
 
         for begin in range(0, batch_size, self.mini_batch_size):
-            rows = torch.arange(begin, min(begin + self.mini_batch_size, batch_size), device=queries.device)
-            chunk = self._row_losses(queries[rows], candidates, labels, rows).sum() / batch_size
+            rows = torch.arange(begin, min(begin + self.mini_batch_size, batch_size), device=anchors.device)
+            chunk = self._row_losses(anchors[rows], candidates, labels, rows).sum() / batch_size
             if with_backward:
                 chunk.backward()
                 chunk = chunk.detach()

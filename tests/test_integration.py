@@ -16,7 +16,7 @@ spec.loader.exec_module(train_example)
 
 from cosmea import (  # noqa: E402
     CachedLogQMultipleNegativesRankingLoss,
-    ItemFrequency,
+    DocumentFrequency,
     LogQMultipleNegativesRankingLoss,
     MixedNegativeDataCollator,
 )
@@ -33,18 +33,18 @@ def setup(tmp_path_factory):
     train_dataset, _, jobs = train_example.build_data()
     collator = MixedNegativeDataCollator(
         preprocess_fn=model.preprocess,
-        item_frequency=ItemFrequency.from_dataset(train_dataset, item_id_column="job_id"),
+        document_frequency=DocumentFrequency.from_dataset(train_dataset, document_id_column="document_id"),
         corpus=[job["text"] for job in jobs],
-        corpus_ids=[job["job_id"] for job in jobs],
+        corpus_ids=[job["document_id"] for job in jobs],
         num_uniform=10,
         query_id_column="query_id",
-        item_id_column="job_id",
+        document_id_column="document_id",
     )
     return model, train_dataset, jobs, collator
 
 
 def split_features(batch):
-    prefixes = ["query_", "job_", "negative_", "uniform_negative_"]
+    prefixes = ["anchor_", "positive_", "negative_", "uniform_negative_"]
     features = [{k[len(p) :]: v for k, v in batch.items() if k.startswith(p)} for p in prefixes]
     return [column for column in features if column]
 
@@ -55,10 +55,10 @@ def test_collator_output(setup):
     batch = collator(rows)
     label = batch["label"]
 
-    assert batch["query_input_ids"].shape[0] == 24 and batch["job_input_ids"].shape[0] == 24
+    assert batch["anchor_input_ids"].shape[0] == 24 and batch["positive_input_ids"].shape[0] == 24
     assert batch["uniform_negative_input_ids"].shape[0] == 10
-    assert not any(key.startswith(("query_id", "job_id")) for key in batch), "id columns must not be tokenized"
-    assert label["cand_id"].tolist()[:24] == [row["job_id"] for row in rows]
+    assert not any(key.startswith(("query_id", "document_id")) for key in batch), "id columns must not be tokenized"
+    assert label["cand_id"].tolist()[:24] == [row["document_id"] for row in rows]
     assert label["cand_source"].tolist() == [SOURCE_IN_BATCH] * 24 + [SOURCE_UNIFORM] * 10
     uniform_ids = label["cand_id"][24:].tolist()
 
@@ -67,7 +67,7 @@ def test_collator_output(setup):
     expected = model.preprocess([jobs[i]["text"] for i in uniform_ids])["input_ids"]
 
     assert torch.equal(batch["uniform_negative_input_ids"], expected)
-    frequency = collator.item_frequency
+    frequency = collator.document_frequency
 
     assert label["cand_count"].tolist() == [float(frequency.count(i)) for i in label["cand_id"].tolist()]
     assert int(label["num_rows"]) == len(train_dataset) and int(label["corpus_size"]) == len(jobs)
@@ -79,15 +79,16 @@ def test_cached_loss_matches_plain_loss(setup):
     rows = []
     for index in range(24):
         row = dict(train_dataset[index])
-        negative_id = (row["job_id"] + 1) % len(jobs)
+        negative_id = (row["document_id"] + 1) % len(jobs)
         row.update(negative=jobs[negative_id]["text"], negative_id=negative_id)
         rows.append(row)
-    collator = replace(collator, extra_item_id_columns={"negative": "negative_id"})
+    collator = replace(collator, extra_document_id_columns={"negative": "negative_id"})
     batch = collator(rows)
     model.eval()  # dropout would make two forward passes differ
     for kwargs in (
         dict(),
         dict(variant="improved", q_measure="inclusion"),
+        dict(variant="plugin", combine="separate", in_batch_logq_strength=0, uniform_logq_strength=1),
     ):
         values, grads = [], []
         for loss_cls, extra in (
@@ -185,18 +186,18 @@ def test_trainer_consumes_metadata_and_updates_model(tmp_path, cached):
     model = train_example.build_tiny_model(tmp_path)
     dataset, _, jobs = train_example.build_data()
     dataset = dataset.select(range(9))
-    negative_ids = [(int(item) + 1) % len(jobs) for item in dataset["job_id"]]
-    dataset = dataset.add_column("negative", [jobs[item]["text"] for item in negative_ids])
+    negative_ids = [(int(document) + 1) % len(jobs) for document in dataset["document_id"]]
+    dataset = dataset.add_column("negative", [jobs[document]["text"] for document in negative_ids])
     dataset = dataset.add_column("negative_id", negative_ids)
     collator = MixedNegativeDataCollator(
         preprocess_fn=model.preprocess,
-        item_frequency=ItemFrequency.from_dataset(dataset, item_id_column="job_id"),
+        document_frequency=DocumentFrequency.from_dataset(dataset, document_id_column="document_id"),
         corpus=[job["text"] for job in jobs],
-        corpus_ids=[job["job_id"] for job in jobs],
+        corpus_ids=[job["document_id"] for job in jobs],
         num_uniform=3,
-        extra_item_id_columns={"negative": "negative_id"},
+        extra_document_id_columns={"negative": "negative_id"},
         query_id_column="query_id",
-        item_id_column="job_id",
+        document_id_column="document_id",
     )
     loss_cls = CachedLogQMultipleNegativesRankingLoss if cached else LogQMultipleNegativesRankingLoss
     loss = loss_cls(model, **({"mini_batch_size": 3} if cached else {}))
@@ -232,15 +233,15 @@ def test_trainer_consumes_metadata_and_updates_model(tmp_path, cached):
     assert torch.isfinite(torch.tensor(metrics["eval_loss"]))
 
 
-def test_retrieval_evaluator_accepts_items_missing_from_training_counts(setup, tmp_path):
+def test_retrieval_evaluator_accepts_documents_missing_from_training_counts(setup, tmp_path):
     from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
     from sentence_transformers.sentence_transformer.evaluation import InformationRetrievalEvaluator
 
     model, _, _, collator = setup
     evaluator = InformationRetrievalEvaluator(
         queries={"held_out_query": "query nurse"},
-        corpus={"unseen_item": "job nurse", "other_item": "job driver"},
-        relevant_docs={"held_out_query": {"unseen_item"}},
+        corpus={"unseen_document": "job nurse", "other_document": "job driver"},
+        relevant_docs={"held_out_query": {"unseen_document"}},
         name="held_out",
         show_progress_bar=False,
     )
@@ -260,3 +261,79 @@ def test_retrieval_evaluator_accepts_items_missing_from_training_counts(setup, t
 
     assert "eval_loss" not in metrics
     assert torch.isfinite(torch.tensor(metrics[f"eval_{evaluator.primary_metric}"]))
+
+
+@pytest.mark.parametrize(
+    "headers",
+    ["anchor,positive,query_id,document_id", "query,positive,query_id,item_id", "query,document,query_id,document_id"],
+)
+def test_training_csv_headers_map_to_the_same_training_roles(tmp_path, headers):
+    spec = importlib.util.spec_from_file_location(
+        "train_from_csv", Path(__file__).resolve().parents[1] / "examples/train_from_csv.py"
+    )
+    train_from_csv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(train_from_csv)
+    path = tmp_path / "train.csv"
+    path.write_text(f"{headers}\nquery text,document text,01,007\n", encoding="utf-8")
+
+    assert train_from_csv.read_training_rows(path) == [
+        {"anchor": "query text", "positive": "document text", "query_id": "01", "document_id": "007"}
+    ]
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_trainer_supports_no_duplicates_with_uniform_only_correction(tmp_path, cached):
+    from datasets import Dataset
+    from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
+    from sentence_transformers.base.sampler import BatchSamplers
+
+    model = train_example.build_tiny_model(tmp_path)
+    rows = [
+        {"anchor": "query nurse", "positive": "job nurse", "query_id": "q:1", "document_id": "d:1"},
+        {"anchor": "query city", "positive": "job nurse", "query_id": "q:2", "document_id": "d:1"},
+        {"anchor": "query driver", "positive": "job driver", "query_id": "q:3", "document_id": "d:2"},
+    ]
+    dataset = Dataset.from_list(rows)
+    collator = MixedNegativeDataCollator(
+        preprocess_fn=model.preprocess,
+        document_frequency=DocumentFrequency.from_dataset(dataset, document_id_column="document_id"),
+        query_id_column="query_id",
+        document_id_column="document_id",
+        corpus=["job nurse", "job driver", "job teacher"],
+        corpus_ids=["d:1", "d:2", "d:3"],
+        num_uniform=1,
+    )
+    args = SentenceTransformerTrainingArguments(
+        output_dir=str(tmp_path),
+        batch_sampler=BatchSamplers.NO_DUPLICATES,
+        per_device_train_batch_size=2,
+        max_steps=1,
+        use_cpu=True,
+        save_strategy="no",
+        report_to="none",
+        disable_tqdm=True,
+    )
+    loss_cls = CachedLogQMultipleNegativesRankingLoss if cached else LogQMultipleNegativesRankingLoss
+    loss = loss_cls(
+        model,
+        variant="plugin",
+        combine="separate",
+        in_batch_logq_strength=0,
+        uniform_logq_strength=1,
+        mask_same_document=True,
+        **({"mini_batch_size": 1} if cached else {}),
+    )
+    assert loss.get_config_dict()["in_batch_logq_strength"] == 0
+    assert loss.get_config_dict()["uniform_logq_strength"] == 1
+    trainer = SentenceTransformerTrainer(
+        model=model,
+        args=args,
+        train_dataset=dataset,
+        data_collator=collator,
+        loss=loss,
+    )
+
+    label = next(iter(trainer.get_train_dataloader()))["label"]
+    assert label["cand_id"][label["cand_source"] == SOURCE_IN_BATCH].unique().numel() == 2
+    assert (label["cand_source"] == SOURCE_UNIFORM).sum() == 1
+    assert torch.isfinite(torch.tensor(trainer.train().training_loss))

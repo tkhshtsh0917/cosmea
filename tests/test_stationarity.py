@@ -18,8 +18,8 @@ def test_yi_expected_gradient_vanishes_at_log_true_probability(num_in_batch, num
     for candidate_tuple in itertools.product(range(3), repeat=batch_size + num_uniform):
         positive, *negatives = candidate_tuple
         chance = probability[positive]
-        for item in negatives[:num_in_batch]:
-            chance = chance * proposal[item]
+        for document in negatives[:num_in_batch]:
+            chance = chance * proposal[document]
         chance = chance * (1 / 3) ** num_uniform
         ids = torch.tensor(candidate_tuple)
         label = {

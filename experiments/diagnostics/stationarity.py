@@ -16,7 +16,7 @@ NUM_ITEMS = 5
 TOTAL = 1000.0  # pretend training set: count(d) = q(d) * N
 
 
-def expected_gradient(num_negatives: int, variant: str, mask_same_item: bool) -> torch.Tensor:
+def expected_gradient(num_negatives: int, variant: str, mask_same_document: bool) -> torch.Tensor:
     logits = torch.log(P_TRUE).clone().requires_grad_()
     batch_size = num_negatives + 1
     expected_grad = torch.zeros_like(logits)
@@ -38,7 +38,7 @@ def expected_gradient(num_negatives: int, variant: str, mask_same_item: bool) ->
                 label,
                 rows=torch.tensor([0]),
                 variant=variant,
-                mask_same_item=mask_same_item,
+                mask_same_document=mask_same_document,
                 mask_same_query=False,
             )
             expected_grad += probability * torch.autograd.grad(loss[0], logits)[0]
@@ -56,4 +56,4 @@ if __name__ == "__main__":
     for n in range(1, args.max_negatives + 1):
         for variant, masked in (("yi", False), ("yi", True), ("plugin", True)):
             gradient = expected_gradient(n, variant, masked)
-            print(f"n={n} {variant} mask_same_item={masked}: max |E[gradient]|={gradient.abs().max().item():.6g}")
+            print(f"n={n} {variant} mask_same_document={masked}: max |E[gradient]|={gradient.abs().max().item():.6g}")
