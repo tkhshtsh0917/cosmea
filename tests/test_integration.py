@@ -19,6 +19,8 @@ from cosmea import (  # noqa: E402
 )
 from cosmea.functional import SOURCE_IN_BATCH, SOURCE_UNIFORM  # noqa: E402
 
+from sentence_transformers.sentence_transformer.losses import MatryoshkaLoss  # noqa: E402
+
 
 @pytest.fixture(scope="module")
 def setup():
@@ -125,7 +127,66 @@ def test_loss_rejects_missing_metadata(setup):
 
 
 @pytest.mark.parametrize("cached", [False, True])
-def test_trainer_consumes_metadata_and_updates_model(tmp_path, cached):
+@pytest.mark.parametrize(
+    "variant,measure",
+    [
+        ("yi", "expected_count"),
+        ("plugin", "expected_count"),
+        ("improved", "expected_count"),
+        ("plugin", "inclusion"),
+        ("improved", "inclusion"),
+    ],
+)
+def test_matryoshka_matches_explicit_dimension_losses(setup, cached, variant, measure):
+    """The wrapper must preserve dict metadata, dimension weights and model gradients."""
+    model, dataset, _, collator = setup
+    model.eval()
+    batch = collator([dataset[i] for i in range(8)])
+    dimensions = [32, 16, 8]
+    weights = [1.0, 0.5, 0.25]
+    reference = LogQMultipleNegativesRankingLoss(model, variant=variant, q_measure=measure)
+
+    model.zero_grad()
+    embeddings = [model(features)["sentence_embedding"] for features in split_features(batch)]
+    expected = torch.stack(
+        [
+            weight
+            * reference.compute_loss_from_embeddings(
+                [torch.nn.functional.normalize(value[:, :dim], dim=-1) for value in embeddings],
+                batch["label"],
+            )
+            for dim, weight in zip(dimensions, weights)
+        ]
+    ).sum()
+    expected.backward()
+    expected_gradient = torch.cat([p.grad.flatten().clone() for p in model.parameters() if p.grad is not None])
+
+    loss_class = CachedLogQMultipleNegativesRankingLoss if cached else LogQMultipleNegativesRankingLoss
+    base = loss_class(model, variant=variant, q_measure=measure, **({"mini_batch_size": 3} if cached else {}))
+    loss = MatryoshkaLoss(
+        model=model,
+        loss=base,
+        matryoshka_dims=dimensions,
+        matryoshka_weights=weights,
+    )
+
+    model.zero_grad()
+    actual = loss(split_features(batch), batch["label"])
+    actual.backward()
+    actual_gradient = torch.cat([p.grad.flatten() for p in model.parameters() if p.grad is not None])
+
+    assert actual.item() == pytest.approx(expected.item(), rel=1e-5, abs=1e-5)
+    assert torch.allclose(actual_gradient, expected_gradient, atol=5e-5, rtol=1e-4)
+
+    with torch.no_grad():
+        evaluation_loss = loss(split_features(batch), batch["label"])
+
+    assert evaluation_loss.item() == pytest.approx(expected.item(), rel=1e-5, abs=1e-5)
+
+
+@pytest.mark.parametrize("cached", [False, True])
+@pytest.mark.parametrize("matryoshka", [False, True])
+def test_trainer_consumes_metadata_and_updates_model(tmp_path, cached, matryoshka):
     from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
 
     model = train_example.build_tiny_model(tmp_path)
@@ -142,6 +203,9 @@ def test_trainer_consumes_metadata_and_updates_model(tmp_path, cached):
     )
     loss_cls = CachedLogQMultipleNegativesRankingLoss if cached else LogQMultipleNegativesRankingLoss
     loss = loss_cls(model, variant="plugin", **({"mini_batch_size": 3} if cached else {}))
+    if matryoshka:
+        loss = MatryoshkaLoss(model=model, loss=loss, matryoshka_dims=[32, 16, 8])
+
     before = torch.cat([p.detach().flatten().clone() for p in model.parameters()])
     args = SentenceTransformerTrainingArguments(
         output_dir=str(tmp_path / "out"),
