@@ -12,7 +12,7 @@ from cosmea.functional import SOURCE_IN_BATCH, mixed_negative_logq_loss
 
 P_TRUE = torch.tensor([0.40, 0.25, 0.20, 0.10, 0.05], dtype=torch.float64)
 Q_PROP = torch.tensor([0.50, 0.10, 0.20, 0.05, 0.15], dtype=torch.float64)
-NUM_ITEMS = 5
+NUM_DOCUMENTS = len(P_TRUE)
 TOTAL = 1000.0  # pretend training set: count(d) = q(d) * N
 
 
@@ -20,8 +20,8 @@ def expected_gradient(num_negatives: int, variant: str, mask_same_document: bool
     logits = torch.log(P_TRUE).clone().requires_grad_()
     batch_size = num_negatives + 1
     expected_grad = torch.zeros_like(logits)
-    for positive in range(NUM_ITEMS):
-        for negatives in itertools.product(range(NUM_ITEMS), repeat=num_negatives):
+    for positive in range(NUM_DOCUMENTS):
+        for negatives in itertools.product(range(NUM_DOCUMENTS), repeat=num_negatives):
             probability = P_TRUE[positive] * torch.prod(Q_PROP[list(negatives)])
             cand = torch.tensor([positive, *negatives])
             label = {

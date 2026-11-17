@@ -125,7 +125,7 @@ def main() -> None:
         model = build_tiny_model(workdir)
         train_dataset, eval_dataset, jobs = build_data()
 
-        # 1. Item frequencies of the *training* positives (exact counts).
+        # 1. Document frequencies of the *training* positives (exact counts).
         frequency = DocumentFrequency.from_dataset(train_dataset, document_id_column="document_id")
 
         # 2. Collator: adds uniformly sampled corpus jobs to every batch + the logQ metadata.

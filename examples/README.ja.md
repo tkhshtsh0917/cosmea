@@ -27,7 +27,7 @@ p3,A guide to garden flowers
 
 `anchor`はクエリのテキスト、`positive`は対応する文書のテキストです。テキスト列の`query`と`document`、旧CSVの`document_id`に相当する`item_id`も読み込めます。
 
-IDはすべて文字列として読みます。既定のyi損失では、すべての正例IDがコーパスにも必要です。`positive`のテキストは、対応するコーパスの文書と同じ内容を表すものにしてください。
+IDはすべて文字列として読みます。コーパスにも同じ正例IDがある場合は、両方のテキストが同じ文書を表すようにしてください。
 
 ```bash
 uv run python train_from_csv.py \
@@ -38,7 +38,7 @@ uv run python train_from_csv.py \
   --uniform 2
 ```
 
-CSVスクリプトはREADMEの標準手順に合わせ、`BatchSamplers.BATCH_SAMPLER`、`mask_same_document=True`、`mask_same_query=True`を明示しています。yiで文書マスクの指定を省略すると、APIの既定値`None`はFalseとして扱われます。
+CSVスクリプトはREADMEの標準手順に合わせ、`plugin`・pooled・期待出現回数を使います。`BatchSamplers.BATCH_SAMPLER`、`mask_same_document=True`、`mask_same_query=True`を明示しています。APIで損失の種類を省略した場合の既定は引き続きyiです。
 
 `--model`には、ローカルのSentence Transformersモデルのディレクトリか、Hugging FaceのモデルIDを指定できます。後者ではモデルをダウンロードする場合があります。一様負例の数はコーパスの重複しないID数以下にしてください。学習したモデルは`outputs/retriever/model`へ保存します。保存するrunの場所は`--output`で選べます。
 

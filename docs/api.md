@@ -6,7 +6,7 @@ Start with the [README example](../README.md#use-your-own-data). This guide expl
 
 ## Prepare pairs and a searchable collection
 
-A **query** is the search input and a **document** is a searchable entry. In a training row, the query is the **anchor**. A **positive** is an document known to match a query, such as a document that was clicked. A **negative** is a comparison document used during training; it is not necessarily irrelevant. The **corpus** is the complete collection of documents you want to search.
+A **query** is the search input and a **document** is a searchable entry. In a training row, the query is the **anchor**. A **positive** is a document known to match a query, such as a document that was clicked. A **negative** is a comparison document used during training; it is not necessarily irrelevant. The **corpus** is the complete collection of documents you want to search.
 
 Prepare the following inputs:
 
@@ -69,14 +69,14 @@ Use `combine="separate"` to give mined negatives their own uncorrected objective
 
 ## Choose the main options
 
-Follow the README with random row sampling, `mask_same_document=True` and `mask_same_query=True`. It uses yi/separate with expected counts; plugin/pooled is another objective to compare under the same sampling and masks. `improved` and inclusion are advanced research controls; `improved` must not be selected by its scalar evaluation loss.
+Follow the README with `plugin`, pooled expected counts, random row sampling and both known-positive masks. The loss class still defaults to yi. `improved` and inclusion are advanced research controls; `improved` must not be selected by its scalar evaluation loss.
 
 | Option | Meaning |
 | --- | --- |
 | `num_uniform` | Number of distinct corpus documents to add to each batch. Use 0 for in-batch negatives alone; do not exceed the number of distinct corpus IDs |
 | `variant` | `yi` is the default. See [how the losses differ](design.md#three-loss-options) before switching to `plugin` or `improved` |
 | `logq_strength` | Strength of the correction: 0 disables it, 1 applies it fully. Must be finite and nonnegative. Intermediate values need evaluation |
-| `in_batch_logq_strength` / `uniform_logq_strength` | Overrides for the corresponding source with `combine="separate"`. `None` inherits `logq_strength`. Each value must be finite and nonnegative. A zero leaves that source's loss active and skips its correction. Pooled mode uses one shared strength |
+| `in_batch_logq_strength` / `uniform_logq_strength` | Source overrides for `combine="separate"`; `None` inherits `logq_strength`. Finite nonnegative values; 0 skips correction and its proposal checks without dropping the source. In separate yi the uniform offset cancels, so `uniform_logq_strength` affects validation only. Pooled mode uses one shared strength |
 | `scale` | Multiplies similarity before correction; default 20. Must be finite and positive. It is the inverse temperature |
 | `combine` | `pooled` uses all candidate sources together. `separate` computes one loss per source and averages the active sources. `auto` chooses separate for yi and pooled otherwise |
 | `q_measure` | `expected_count` keeps repeated documents and uses their expected number of appearances. `inclusion` keeps one eligible occurrence per document and uses the chance of appearing at least once. Inclusion is unavailable with yi |
@@ -123,10 +123,13 @@ loss = LogQMultipleNegativesRankingLoss(
     in_batch_logq_strength=0,
     uniform_logq_strength=1,
     mask_same_document=True,
+    mask_same_query=True,
 )
 ```
 
-The plugin loss leaves the positive logit unchanged, so the uniform correction changes the loss. In a separate yi objective, the same uniform logQ offset applies to the positive and all uniform negatives and cancels inside their softmax. A positive with an active yi uniform correction must still belong to the corpus. Both the ordinary and cached Cosmea losses accept the same strengths.
+This is a compatibility option. It has been exercised in Trainer integration tests with `NO_DUPLICATES`; its retrieval quality relative to the standard workflow has not been established. The sampler changes which rows share a batch. Changing only the loss options under a random sampler does not test this recipe.
+
+The plugin loss leaves the positive logit unchanged, so the uniform correction changes the loss. In separate yi, the uniform offset cancels in the softmax. Requesting that correction still validates corpus support; setting its strength to 0 uses an ordinary uncorrected source loss. Both loss classes accept the same strengths.
 
 For plugin, the uniform term is $\log(1+(M/K)^{\lambda_u}S_u/e^{F_p})$, where $S_u$ sums the exponentiated eligible uniform scores, $F_p$ is the positive score and $\lambda_u$ is the uniform correction strength. At strength 1, this estimates a full-corpus negative sum. It changes the margin against the positive by $\log(M/K)$ and the resulting gradient. It is not a document-specific popularity correction. An unbiased sum does not imply unbiased loss or gradients, or improved retrieval quality. The separate average with an uncorrected in-batch loss remains a composite objective. Only sources with eligible negatives enter that average.
 
@@ -163,7 +166,7 @@ The following example assumes a 768-dimensional model. Choose positive dimension
 from sentence_transformers.sentence_transformer.losses import MatryoshkaLoss
 from cosmea import LogQMultipleNegativesRankingLoss
 
-base_loss = LogQMultipleNegativesRankingLoss(model, variant="yi")
+base_loss = LogQMultipleNegativesRankingLoss(model, variant="plugin")
 loss = MatryoshkaLoss(
     model=model,
     loss=base_loss,
@@ -175,7 +178,7 @@ Pass `loss` to the Trainer and keep the same `MixedNegativeDataCollator`. To use
 
 Cosmea's sampling metadata is independent of embedding size, so the same IDs and counts are used at each size. With weights $w_m$, the combined loss is $\sum_m w_m\ell_m$; the weights default to 1 and are not automatically averaged.
 
-CPU tests compare plain and cached wrappers with explicit losses at 32, 16 and 8 dimensions, including unequal weights. The wrapper comparison uses plugin/expected-count; score-level tests cover variant identities separately. Trainer tests also exercise a singleton final batch with mined negatives, using plain yi and cached yi wrapped in Matryoshka. This verifies integration and gradients, not retrieval quality after truncation. Random dimension subsets (`n_dims_per_step`), GPU and Matryoshka2dLoss have not been tested here.
+CPU tests compare plain and cached wrappers with explicit losses at 32, 16 and 8 dimensions, including unequal weights. Trainer tests use the masked plugin workflow with uniform and mined negatives, including a singleton final batch and a cached loss wrapped in Matryoshka. This verifies integration and gradients, not retrieval quality after truncation. Random dimension subsets (`n_dims_per_step`), GPU and Matryoshka2dLoss have not been tested here.
 
 ## Reference: metadata passed to the loss
 
@@ -196,4 +199,4 @@ These tensors travel in `batch["label"]`; they are not model input features. Los
 
 `candidate_log_q(..., rows=...)` returns shape $(b,C)$ and accounts for the positive row already being selected. Without `rows`, it returns $(C,)$ and does not subtract that occurrence. `iid_proposal=True` uses the count/$N$ approximation for yi; it does not change how the collator samples.
 
-Low-level helpers (`candidate_log_q`, `negative_log_partition`, `stable_id`) remain available for existing callers, but the classes and `mixed_negative_logq_loss` are the main usage API. The helper-only `iid_proposal=True, q_measure="inclusion"` computes binomial inclusion; it does not enable yi/inclusion losses.
+Low-level helpers (`candidate_log_q`, `negative_log_partition`, `stable_id`) let you inspect proposal weights and partitions or align IDs with the collator. For training, start with the classes or `mixed_negative_logq_loss`. The helper-only `iid_proposal=True, q_measure="inclusion"` computes binomial inclusion; it does not enable yi/inclusion losses.

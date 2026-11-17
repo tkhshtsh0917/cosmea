@@ -69,14 +69,14 @@ collator = MixedNegativeDataCollator(
 
 ## 主な設定を選ぶ
 
-READMEの標準手順に従い、ランダムな行抽出と`mask_same_document=True`、`mask_same_query=True`を使います。例の損失はyi/separate・expected_countです。同じ抽出方法とマスク条件で、plugin/pooledも比較できます。`improved`・inclusionは比較研究向けです。`improved`の評価損失でモデルを選ばないでください。
+READMEの標準手順では、ランダムな行抽出と2つの既知正例マスクを使い、`plugin`で出所をまとめて期待出現回数を使います。クラスの既定値は引き続きyiです。`improved`・inclusionは比較研究向けです。`improved`の評価損失でモデルを選ばないでください。
 
 | 設定 | 意味 |
 | --- | --- |
 | `num_uniform` | 各バッチへ追加する、重複しないコーパス文書の数。0ならバッチ内負例だけを使う。コーパスの重複しないID数を超えて指定できない |
 | `variant` | 既定は`yi`。`plugin`や`improved`へ変える前に[損失の違い](design.md#3種類の損失)を確認する |
 | `logq_strength` | 補正の強さ。0で補正なし、1で通常の補正。有限の非負値が必要で、中間値の効果は評価して選ぶ |
-| `in_batch_logq_strength` / `uniform_logq_strength` | `combine="separate"`で負例の出所ごとに補正の強さを指定する。有限の非負値が必要。`None`は`logq_strength`を継承する。0でもその出所の損失は計算し、補正だけを省く。pooledでは共通の強さを使う |
+| `in_batch_logq_strength` / `uniform_logq_strength` | `combine="separate"`で出所ごとの補正強度を指定する。`None`は`logq_strength`を継承。有限かつ0以上。0はその出所の損失を残し、補正と提案分布の検査を省く。separateのyiでは一様側の補正が相殺され、一様側の強度は検査にだけ影響する。pooledでは共通の強さを使う |
 | `scale` | 補正の前に類似度へ掛ける倍率。既定20。有限の正の値が必要で、「温度」の逆数に当たる |
 | `combine` | `pooled`は候補をまとめて計算。`separate`は負例の出所ごとに計算し、有効なものだけ平均。`auto`はyiでseparate、それ以外でpooledを選ぶ |
 | `q_measure` | `expected_count`は同じ文書の重複を残し、平均して何回現れるかを使う。`inclusion`は有効な候補を文書ごとに1件にし、少なくとも1回現れる確率を使う。yiではinclusionを使えない |
@@ -123,10 +123,13 @@ loss = LogQMultipleNegativesRankingLoss(
     in_batch_logq_strength=0,
     uniform_logq_strength=1,
     mask_same_document=True,
+    mask_same_query=True,
 )
 ```
 
-pluginでは正例のスコアが補正されないため、一様負例の補正が損失に反映されます。yiのseparateでは、正例と一様負例すべてに同じlogQ補正がかかるため、softmax内で相殺されます。yiで一様側の補正を有効にした場合、正例は引き続きコーパス内にある必要があります。通常版とCached版のどちらでも同じ補正強度を指定できます。
+これは併用するための選択肢です。`NO_DUPLICATES`を使うTrainer統合テストで動作を確認していますが、標準手順と比べた検索品質は確立していません。サンプラーはどの行が同じバッチに入るかを変えるので、ランダム抽出のまま損失設定だけを変えても、この併用構成の検証にはなりません。
+
+pluginでは正例のスコアが補正されないため、一様負例の補正が損失に反映されます。separateのyiでは、一様側の補正がsoftmax内で相殺されます。補正を指定した場合はコーパスに必要な文書が含まれるかを検査し、強度0の場合はその出所を無補正で計算します。通常版とCached版のどちらでも同じ補正強度を指定できます。
 
 pluginの一様側の損失は $\log(1+(M/K)^{\lambda_u}S_u/e^{F_p})$ です。$S_u$はマスク後の有効な一様負例の指数スコアの和、$F_p$は正例スコア、$\lambda_u$は一様側の補正強度です。強度1ではコーパス全体の負例の和を推定します。正例に対するマージンを$\log(M/K)$だけ変え、勾配に反映します。文書ごとの人気の違いを補正するものではありません。和が不偏でも、損失や勾配の不偏性、検索品質の改善は保証されません。無補正のバッチ内損失とseparateで平均すると、両者を組み合わせた目的関数になります。この平均には有効な負例がある出所だけが入ります。
 
@@ -134,7 +137,7 @@ pluginの一様側の損失は $\log(1+(M/K)^{\lambda_u}S_u/e^{F_p})$ です。$
 
 頻度は実際に抽出する学習splitから数えます。学習に使っていないデータで品質を測る場合は、コーパス全体を検索して指標を計算してください。別の評価splitへ学習頻度を使い回すと、一般に補正する確率がずれます。Trainerの評価テストは、情報が損失まで届くことの確認であり、未知データでの品質評価ではありません。
 
-未知クエリの品質評価には、Trainerへ検索用`evaluator`を渡し、`eval_dataset`は省いてください。`eval_queries`はquery IDからテキストへの辞書、`eval_relevant_docs`は同じクエリ IDから正解のコーパスID集合への辞書です。IDはコーパスの辞書と揃え、必要ならモデルに合う評価用promptも指定します。
+未知クエリの品質評価には、Trainerへ検索用`evaluator`を渡し、`eval_dataset`は省いてください。`eval_queries`はクエリIDからテキストへの辞書、`eval_relevant_docs`は同じクエリIDから正解の文書ID集合への辞書です。文書IDはコーパスの辞書と揃え、必要ならモデルに合う評価用promptも指定します。
 
 ```python
 from sentence_transformers.sentence_transformer.evaluation import InformationRetrievalEvaluator
@@ -163,7 +166,7 @@ Cosmeaの通常版・Cached版のどちらも、Sentence Transformers 6.3の`Mat
 from sentence_transformers.sentence_transformer.losses import MatryoshkaLoss
 from cosmea import LogQMultipleNegativesRankingLoss
 
-base_loss = LogQMultipleNegativesRankingLoss(model, variant="yi")
+base_loss = LogQMultipleNegativesRankingLoss(model, variant="plugin")
 loss = MatryoshkaLoss(
     model=model,
     loss=base_loss,
@@ -175,7 +178,7 @@ loss = MatryoshkaLoss(
 
 抽出情報は埋め込みの長さに依存しないので、どの次元でも同じIDと頻度を使えます。重みを$w_m$とすると、全体の損失は$\sum_m w_m\ell_m$です。重みの既定値は1で、自動的に平均するわけではありません。
 
-CPU検証では32・16・8次元で、通常版・Cached版の結果を、次元別に明示計算した損失と比較しています。wrapperの比較はplugin/expected-countで異なる重みを使い、損失間の恒等式はスコア水準で別に確認します。Trainerでは追加負例と最後の1行バッチを含め、通常yiとMatryoshkaで包んだCached yiの学習・評価も確認します。これは接続と勾配の検証で、短くした後の検索品質を保証するものではありません。ランダムな次元選択（`n_dims_per_step`）、GPU、Matryoshka2dLossはここでは未検証です。
+CPU検証では32・16・8次元で、通常版・Cached版の結果を、異なる重みで次元別に明示計算した損失と比較しています。Trainerではマスク付きpluginを使い、一様負例・採掘負例、最後の1行バッチ、Matryoshkaで包んだCached版も確認します。これは接続と勾配の検証で、短くした後の検索品質を保証するものではありません。ランダムな次元選択（`n_dims_per_step`）、GPU、Matryoshka2dLossはここでは未検証です。
 
 ## 詳細：損失へ渡す情報
 
@@ -196,4 +199,4 @@ CPU検証では32・16・8次元で、通常版・Cached版の結果を、次元
 
 `candidate_log_q(..., rows=...)`はshape $(b,C)$で、正例の行が既に選ばれていることを考慮します。`rows`を省くと$(C,)$になり、その1回分を引きません。`iid_proposal=True`はyi用のcount/$N$近似で、コレーターの抽出方法を変える指定ではありません。
 
-低水準の`candidate_log_q`・`negative_log_partition`・`stable_id`は既存利用との互換性のため残しますが、通常はクラスと`mixed_negative_logq_loss`を使ってください。補助関数だけの`iid_proposal=True, q_measure="inclusion"`は二項分布の包含確率を計算する指定で、yi/inclusionの損失を有効にするものではありません。
+低水準の`candidate_log_q`・`negative_log_partition`・`stable_id`は、補正重みや負例の和の確認、コレーターとのIDの統一に使えます。学習にはまずクラスか`mixed_negative_logq_loss`を使ってください。補助関数だけの`iid_proposal=True, q_measure="inclusion"`は二項分布の包含確率を計算する指定で、yi/inclusionの損失を有効にするものではありません。

@@ -6,7 +6,7 @@
 
 名前はコスモスの異名 *Cosmea* と、花言葉の「調和」に由来します。
 
-> 開発版 `0.1.0.dev0`。2026-11-17時点でCPU上の数式・統合テストを確認。実データでの有効性は未検証です。logQは負例抽出の偏りを補正するもので、人気集中の緩和や因果的公平性を保証する機能ではありません。
+> 開発版 `0.1.0.dev0`。2026-11-18時点でCPU上の数式・統合テストを確認。実データでの有効性は未検証です。logQは負例抽出の偏りを補正するもので、人気集中の緩和や因果的公平性を保証する機能ではありません。
 
 ## インストール
 
@@ -58,7 +58,8 @@ collator = MixedNegativeDataCollator(
 
 loss = LogQMultipleNegativesRankingLoss(
     model,
-    variant="yi",
+    variant="plugin",
+    combine="pooled",
     logq_strength=1.0,
     mask_same_document=True,
     mask_same_query=True,
@@ -90,7 +91,7 @@ prompt・Routerのtask・長さ制限が必要なら、`prompts`・`router_mappi
 
 標準手順は、上の例のようにランダムな行抽出と2つの既知正例マスクを組み合わせます。頻度は同じ学習splitから作ります。アンカーの正例と、同じクエリに紐づくバッチ内の別の正例を、負例から除外します。一様負例・採掘負例に同じ文書IDがある場合も対象です。
 
-例では`mask_same_document=True`を明示しています。APIの既定は`None`で、yiではFalse、plugin/improvedではTrueとして扱います。`mask_same_query`の既定はTrueです。この例のマスク付きyiは、引数を省略したyiとは目的関数が異なります。マスクで有効な負例数が減る場合は、`num_uniform`を調整し、検索品質を評価してください。別のサンプラーを組み合わせる手順は[APIガイド](docs/ja/api.md#バッチサンプラーを選ぶ)にまとめています。
+例では`plugin`を使い、既知の正例を負例の和から外しても、正例そのもののスコアは補正しません。APIの既定は引き続き`yi`です。yiに文書マスクを掛けると、単純な負例抽出の例でも学習する分布が変わることがあります。pluginにも小さいバッチでの限界があります。マスクで有効な負例が減る場合は、未知データでの検索指標を見て`num_uniform`を調整してください。[設計の説明](docs/ja/design.md#正例を負例から除くと何が変わるか)と[別のサンプラーを使う手順](docs/ja/api.md#バッチサンプラーを選ぶ)も参照できます。
 
 通常版・Cached版のどちらも、[MatryoshkaLoss](docs/ja/api.md#複数の埋め込み次元で学習する)で包み、複数の埋め込み次元をまとめて学習できます。
 
@@ -112,7 +113,7 @@ prompt・Routerのtask・長さ制限が必要なら、`prompts`・`router_mappi
 
 `num_uniform=0` でlogQのみ、`logq_strength=0` で補正なし、`combine="pooled"` で候補を一つにまとめます。**素のMNRLとの比較には `logq_strength=0, combine="pooled"`** とマスク条件の統一が必要です。`auto`のyiはseparateなので同じ目的関数にはなりません。
 
-採掘負例はseparateで独立した無補正の目的関数にします。pooledでは相対的な影響が小さくなる場合があります。まずyi/separate、またはplugin/pooledをexpected_countで試してください。
+採掘負例はseparateで独立した無補正の損失にできます。pooledでは相対的な影響が小さくなる場合があります。
 
 詳細は [API契約](docs/ja/api.md)、[設計と互換性](docs/ja/design.md)、[開発・検証手順](CONTRIBUTING.ja.md) を参照してください。
 

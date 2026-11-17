@@ -47,9 +47,13 @@ CONFIGS = {
     "in-batch, plugin (=improved)": (0, dict(variant="plugin")),
     "MNS, no correction": (1, dict(logq_strength=0.0, combine="pooled")),
     "MNS, yi, separate": (1, dict(variant="yi", combine="separate")),
+    "MNS, yi, separate, hits masked": (1, dict(variant="yi", combine="separate", mask_same_document=True)),
     "MNS, yi, pooled": (1, dict(variant="yi", combine="pooled")),
     "MNS, yi, separate, lambda=0.5": (1, dict(variant="yi", combine="separate", logq_strength=0.5)),
-    "MNS, plugin (=improved), pooled": (1, dict(variant="plugin", combine="pooled")),
+    "MNS, plugin (=improved), pooled": (
+        1,
+        dict(variant="plugin", combine="pooled", mask_same_document=True, mask_same_query=True),
+    ),
     "MNS, plugin, separate": (1, dict(variant="plugin", combine="separate")),
     "MNS, plugin, pooled, inclusion": (1, dict(variant="plugin", combine="pooled", q_measure="inclusion")),
     # Diagnostic for sensitivity to Q scale; not a reproduction of the author repository.

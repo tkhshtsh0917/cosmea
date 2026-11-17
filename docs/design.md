@@ -4,7 +4,7 @@
 
 ## Why mix negative examples?
 
-A retrieval model learns to give a query's positive document a higher score than comparison documents. Using the other positives in the same batch is convenient, but frequently clicked documents then appear more often as comparisons. Items without clicks may never appear at all.
+A retrieval model learns to give a query's positive document a higher score than comparison documents. Using the other positives in the same batch is convenient, but frequently clicked documents then appear more often as comparisons. Documents without clicks may never appear at all.
 
 Cosmea combines two sources: the other positives in the batch, and documents drawn uniformly from the searchable collection. This is **Mixed Negative Sampling (MNS)**. The uniform part can include documents without feedback.
 
@@ -23,7 +23,7 @@ Cosmea supports both calculations:
 
 Mixing these rules gives the wrong weight. For example, keeping only one b and still dividing by $4/3$ makes its contribution too small. Candidates excluded by a mask are removed before deduplication.
 
-The standard usage examples combine uniform random row sampling with document and query masks. This uses the declared row proposal while excluding batch-known positives. Query masking is a heuristic and the masked yi objective differs from its unmasked default. API defaults and objective comparisons are described in the [API guide](api.md#avoid-treating-known-matches-as-negatives).
+The standard usage examples combine `plugin`, pooled expected counts, uniform random row sampling and both known-positive masks. Query masking uses only matches known in the current batch. This extra filtering changes the sampling assumptions behind the exact estimate.
 
 ## Three loss options
 
@@ -33,7 +33,20 @@ The standard usage examples combine uniform random row sampling with document an
 | `plugin` | Keeps the positive score uncorrected and estimates the total negative contribution | A useful way to match the correction to the actual draw procedure |
 | `improved` | Multiplies a score difference by a confidence weight whose gradient is stopped | Has the same first gradient as plugin with identical settings; loss values and higher derivatives differ |
 
-The row sampler draws training rows without replacement; the collator independently draws distinct corpus documents. Thus, a consistency result proved for independent draws does not automatically apply to the default yi implementation. yi does not support `inclusion`. With a separate uniform yi loss, every positive must be present in the corpus.
+### What changes when positives are masked?
+
+The ranking-NCE argument for yi assumes independent draws and keeps negative draws that happen to match the positive document. Removing those draws while still correcting the positive changes the expected gradient. The standard example uses plugin because it corrects only the negative sum. This follows the distinction between a known positive and sampled negatives in [Correcting the LogQ Correction, §3.3](https://arxiv.org/html/2507.09331v2#S3.SS3); Cosmea uses its own finite-population proposal.
+
+In [the five-document diagnostic](../experiments/diagnostics/stationarity.py), exact enumeration at the true distribution gives the following largest absolute component of the expected score gradient. The table compares yi with and without the document mask, and plugin with the mask. All three use the same draws, with no uniform negatives or query-dependent exclusions.
+
+| Negative draws | yi, document mask off | yi, document mask on | plugin, document mask on |
+| ---: | ---: | ---: | ---: |
+| 2 | $2.3\times10^{-17}$ | 0.0193 | 0.0829 |
+| 4 | $3.2\times10^{-16}$ | 0.0528 | 0.0484 |
+
+The masked yi gradient need not vanish, and plugin can also have substantial bias with few negatives. The example does not establish a general ordering, monotonicity with batch size, or better retrieval quality. Compare settings on held-out full-corpus retrieval metrics.
+
+The row sampler draws training rows without replacement; the collator independently draws distinct corpus documents. Thus, a consistency result proved for independent draws does not automatically apply to the default yi implementation. yi does not support `inclusion`. When uniform correction is enabled in separate yi, the positive IDs must be present in the corpus.
 
 Under suitable sampling assumptions, the average estimate of the total negative contribution is correct. This property is called **unbiasedness**. Taking a logarithm or a ratio can introduce bias again, so it does not imply unbiased loss gradients. Query-based filtering and manually supplied negatives also change the assumptions.
 
@@ -43,7 +56,7 @@ Under ideal independent sampling and a sufficiently expressive model, logQ corre
 
 In `separate` mode, in-batch, uniform and extra mined candidates form independent objectives. Extra candidates are shared across queries, receive no correction, and use an uncorrected positive. Only objectives with eligible negatives enter the average. A singleton batch with mined negatives therefore remains trainable. This changes the initial development behavior, which grouped mined candidates with in-batch candidates.
 
-In `pooled` mode, mined terms keep weight 1 while sampled terms receive $1/q$ weighting. With rare documents or a larger training population, mined terms can have much less relative influence. Choose separate mode when you want an independent mined-negative objective; its real-data quality still needs evaluation. If there are no in-batch or uniform draws at all, pooled mined candidates use an uncorrected positive as well. A sampled yi objective with zero positive support remains an error.
+In `pooled` mode, mined terms keep weight 1 while sampled terms receive $1/q$ weighting at strength 1. With rare documents or a larger training population, mined terms can have much less relative influence. Choose separate mode when you want an independent mined-negative objective; its real-data quality still needs evaluation. If only mined negatives remain after masking a row, pooled yi uses an uncorrected positive for that row. A corrected yi term with eligible sampled negatives and zero positive support remains an error.
 
 `improved` is a research option, not an extra source of first-order gradient improvement over plugin. Its scalar value is non-monotonic in the margin and can be negative. Do not use its `eval_loss` for early stopping or best-checkpoint selection. Use held-out retrieval metrics, or train with plugin when a comparable loss value is needed. `scale=20` is a starting value, not a calibrated choice for the catalogue-sized partition estimate; tune it against retrieval metrics.
 
@@ -103,7 +116,15 @@ $$
 \widetilde F_{id}=F_{id}-\lambda\log q_i(d),\qquad \lambda=\texttt{logq\_strength}.
 $$
 
-For the negative terms, plugin/improved use $e_i(d)$ or $\pi_i(d)$ as $q_i(d)$, according to `q_measure`. The yi expected-count calculation instead uses the empirical independent-draw probability $c_d/N$, combined with source counts and corpus sampling. Extra mined-negative columns receive no correction.
+For the negative terms, plugin/improved use $e_i(d)$ or $\pi_i(d)$ as $q_i(d)$, according to `q_measure`. Yi uses the expected counts from an independent-draw approximation:
+
+$$
+q^{\mathrm{batch}}(d)=(B-1)c_d/N,\qquad
+q^{\mathrm{uniform}}(d)=(K/M)\,\mathbf{1}[d\in\mathrm{corpus}],\qquad
+q^{\mathrm{pooled}}(d)=q^{\mathrm{batch}}(d)+q^{\mathrm{uniform}}(d).
+$$
+
+The uniform term is zero if $K=0$. The counts are computed before masking. An extra mined candidate has $q=1$ for its column, so it gets no correction regardless of its ID.
 
 Let $\mathcal V_i$ be the eligible negative entries after masking and, for inclusion mode, deduplication. The corrected negative sum and its logarithm are:
 
@@ -120,4 +141,20 @@ $$
 \ell_i^{\mathrm{improved}}=\operatorname{sg}\!\left[\sigma(z_i-F_{i,p_i})\right](z_i-F_{i,p_i}).
 $$
 
-Here $\sigma(x)=1/(1+e^{-x})$ and $\operatorname{sg}$ stops the gradient through the confidence weight. Both give the same first derivative for identical negative sums. This is an adaptation of the confidence-weighted formulation, not a literal reproduction of the paper's Q-prime or author scripts. Empty negative sets are handled separately as zero loss and gradient.
+Here $\sigma(x)=1/(1+e^{-x})$ and $\operatorname{sg}$ stops the gradient through the confidence weight. Both give the same first derivative for identical negative sums. This is an adaptation of the confidence-weighted formulation, not a literal reproduction of the paper's Q-prime or author scripts.
+
+Yi also corrects the positive logit. For a pooled loss or a separate sampled source with eligible negatives:
+
+$$
+\ell_i^{\mathrm{yi}}=\log\left(1+\exp\left(z_i-F_{i,p_i}+\lambda\log q(p_i)\right)\right).
+$$
+
+Use the matching proposal and strength for the positive and negative terms. In the separate uniform loss, $q=K/M$ for supported documents, so the offsets cancel and Cosmea computes the uncorrected softmax directly. On a row with only mined negatives, $\lambda\log q(p_i)$ is taken as zero even in pooled mode. A zero strength skips the proposal entirely. An empty negative set contributes zero loss and gradient.
+
+For separate mode let $\mathcal A_i$ be the sources (in-batch, uniform, mined) with at least one eligible negative in row $i$. The final row loss is
+
+$$
+\ell_i=\frac{\sum_{s\in\mathcal A_i}\ell_{i,s}}{\max(1,|\mathcal A_i|)}.
+$$
+
+The training classes then average the row losses over the batch. Proposal metadata and masks are fixed with respect to the score gradients.

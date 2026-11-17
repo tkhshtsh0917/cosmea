@@ -106,6 +106,94 @@ def test_cached_loss_matches_plain_loss(setup):
         assert torch.allclose(grads[0], grads[1], atol=5e-5, rtol=1e-4), kwargs
 
 
+def test_plain_and_cached_score_texts_in_metadata_order(setup):
+    """With correction and optional masks disabled, use ordinary cross-entropy as the oracle."""
+    model, dataset, jobs, collator = setup
+    model.eval()
+    rows = [dict(dataset[index]) for index in (0, 5, 2)]
+    for row, document_id in zip(rows, (101, 107, 103), strict=True):
+        row.update(negative=jobs[document_id]["text"], negative_id=document_id)
+    collator = replace(collator, extra_document_id_columns={"negative": "negative_id"})
+    batch = collator(rows)
+    label = batch["label"]
+    scale = 7.0
+    anchor_texts = [row["anchor"] for row in rows]
+    document_texts = [jobs[index]["text"] for index in label["cand_id"].tolist()]
+    anchors, documents = [
+        torch.nn.functional.normalize(model(model.preprocess(texts))["sentence_embedding"], dim=1)
+        for texts in (anchor_texts, document_texts)
+    ]
+    scores = scale * (anchors @ documents.T)
+    expected = torch.nn.functional.cross_entropy(scores, torch.arange(len(rows)))
+    model.zero_grad()
+    expected.backward()
+    expected_grads = [p.grad.clone() for p in model.parameters() if p.grad is not None]
+
+    options = dict(
+        scale=scale,
+        variant="plugin",
+        combine="pooled",
+        logq_strength=0,
+        mask_same_document=False,
+        mask_same_query=False,
+    )
+    for loss in (
+        LogQMultipleNegativesRankingLoss(model, **options),
+        CachedLogQMultipleNegativesRankingLoss(model, mini_batch_size=2, **options),
+    ):
+        model.zero_grad()
+        actual = loss(split_features(batch), label)
+        actual.backward()
+        torch.testing.assert_close(actual, expected)
+        actual_grads = [p.grad for p in model.parameters() if p.grad is not None]
+        torch.testing.assert_close(actual_grads, expected_grads, atol=5e-5, rtol=1e-4)
+
+
+def test_loss_constructors_preserve_legacy_positional_arguments():
+    model = torch.nn.Identity()
+    similarity = torch.mm
+    options = dict(
+        scale=7.0,
+        similarity_fct=similarity,
+        variant="plugin",
+        logq_strength=0.5,
+        q_measure="inclusion",
+        combine="separate",
+        mask_same_document=True,
+        mask_same_query=False,
+    )
+    plain = LogQMultipleNegativesRankingLoss(
+        model,
+        7.0,
+        similarity,
+        "plugin",
+        0.5,
+        "inclusion",
+        "separate",
+        True,
+        False,
+    )
+    cached = CachedLogQMultipleNegativesRankingLoss(
+        model,
+        7.0,
+        similarity,
+        3,
+        "plugin",
+        0.5,
+        "inclusion",
+        "separate",
+        True,
+        False,
+        True,
+    )
+    assert plain.get_config_dict() == LogQMultipleNegativesRankingLoss(model, **options).get_config_dict()
+    assert (
+        cached.get_config_dict()
+        == CachedLogQMultipleNegativesRankingLoss(model, mini_batch_size=3, **options).get_config_dict()
+    )
+    assert cached.show_progress_bar is True
+
+
 @pytest.mark.workers
 def test_workers_draw_different_uniform_negatives(setup):
     _, train_dataset, _, collator = setup
@@ -182,6 +270,7 @@ def test_matryoshka_matches_explicit_dimension_losses(setup, cached):
 @pytest.mark.parametrize("cached", [False, True])
 def test_trainer_consumes_metadata_and_updates_model(tmp_path, cached):
     from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
+    from sentence_transformers.base.sampler import BatchSamplers
 
     model = train_example.build_tiny_model(tmp_path)
     dataset, _, jobs = train_example.build_data()
@@ -200,7 +289,14 @@ def test_trainer_consumes_metadata_and_updates_model(tmp_path, cached):
         document_id_column="document_id",
     )
     loss_cls = CachedLogQMultipleNegativesRankingLoss if cached else LogQMultipleNegativesRankingLoss
-    loss = loss_cls(model, **({"mini_batch_size": 3} if cached else {}))
+    loss = loss_cls(
+        model,
+        variant="plugin",
+        combine="pooled",
+        mask_same_document=True,
+        mask_same_query=True,
+        **({"mini_batch_size": 3} if cached else {}),
+    )
     if cached:
         loss = MatryoshkaLoss(model=model, loss=loss, matryoshka_dims=[32, 16, 8])
 
@@ -209,6 +305,7 @@ def test_trainer_consumes_metadata_and_updates_model(tmp_path, cached):
         output_dir=str(tmp_path / "out"),
         max_steps=2,
         per_device_train_batch_size=8,
+        batch_sampler=BatchSamplers.BATCH_SAMPLER,
         per_device_eval_batch_size=8,
         use_cpu=True,
         save_strategy="no",

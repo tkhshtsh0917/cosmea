@@ -27,7 +27,7 @@ p3,A guide to garden flowers
 
 The `anchor` is the query text, and the `positive` is the matching document text. The script also accepts `query` and `document` for those text columns and `item_id` for `document_id` in older CSVs.
 
-All IDs are read as strings, and every positive ID must appear in the corpus for the default yi loss. The `positive` text should describe the same document as its corpus entry.
+All IDs are read as strings. If a positive ID also appears in the corpus, the texts should describe the same document.
 
 ```bash
 uv run python train_from_csv.py \
@@ -38,7 +38,7 @@ uv run python train_from_csv.py \
   --uniform 2
 ```
 
-The CSV script follows the README workflow with `BatchSamplers.BATCH_SAMPLER`, `mask_same_document=True` and `mask_same_query=True`. These masks are explicitly set in the example; yi otherwise resolves the API default `mask_same_document=None` to False.
+The CSV script follows the README workflow: `plugin` with pooled expected counts, `BatchSamplers.BATCH_SAMPLER`, `mask_same_document=True` and `mask_same_query=True`. The library still defaults to yi when no variant is specified.
 
 `--model` accepts a local Sentence Transformers model directory or a Hugging Face model ID. Using a remote ID may download its files. The uniform count cannot exceed the number of distinct corpus IDs. The trained model is saved to `outputs/retriever/model`; run folders can be selected with `--output`.
 

@@ -6,7 +6,7 @@ Cosmea adds **logQ correction and Mixed Negative Sampling (MNS)** to Sentence Tr
 
 The name *Cosmea* comes from cosmos flowers and their association with harmony.
 
-Development version `0.1.0.dev0`. CPU mathematical and integration checks were run on 2026-11-17. Real-data effectiveness is unverified. Correcting negative sampling does not guarantee reduced popularity concentration or causal fairness.
+Development version `0.1.0.dev0`. CPU mathematical and integration checks were run on 2026-11-18. Real-data effectiveness is unverified. Correcting negative sampling does not guarantee reduced popularity concentration or causal fairness.
 
 ## Installation
 
@@ -56,7 +56,8 @@ collator = MixedNegativeDataCollator(
 
 loss = LogQMultipleNegativesRankingLoss(
     model,
-    variant="yi",
+    variant="plugin",
+    combine="pooled",
     logq_strength=1.0,
     mask_same_document=True,
     mask_same_query=True,
@@ -88,7 +89,7 @@ For held-out evaluation, use a retrieval `evaluator` instead of reusing this col
 
 The standard workflow uses random row sampling with both known-positive masks enabled, as shown above. Build counts from the same training split. The masks exclude the anchor's positive and other positives attached to the same query in the batch, including matching IDs in uniform or mined candidates.
 
-The example explicitly sets `mask_same_document=True`. The API default is `None`, which resolves to False for yi and True for plugin/improved; `mask_same_query` defaults to True. This masked yi objective differs from yi with its default settings. Masking can reduce the usable negative count; adjust `num_uniform` and evaluate retrieval quality. Alternative sampler configurations are described in the [API guide](docs/api.md#choose-a-batch-sampler).
+The example uses `plugin` so the positive score stays unchanged when known matches are removed from the negative sum. The API still defaults to `yi`. Combining yi with document masking can change what the loss learns, even in a simple model of negative sampling. Plugin also has limits with small batches. Masking can reduce the usable negative count, so tune `num_uniform` on held-out retrieval metrics. See the [design notes](docs/design.md#what-changes-when-positives-are-masked) and the [API guide for other samplers](docs/api.md#choose-a-batch-sampler).
 
 Both loss classes can also be wrapped in [MatryoshkaLoss](docs/api.md#train-at-multiple-embedding-sizes) to train several embedding sizes together.
 
@@ -110,7 +111,7 @@ Both loss classes can also be wrapped in [MatryoshkaLoss](docs/api.md#train-at-m
 
 Use `num_uniform=0` for logQ alone, `logq_strength=0` for no correction and `combine="pooled"` for one joint candidate softmax. A plain-MNRL comparison needs **both `logq_strength=0, combine="pooled"` and matching masks**; yi's auto/separate mode is a different objective.
 
-For mined negatives, separate mode gives them an independent uncorrected objective; pooled mode can reduce their relative influence. Start with yi/separate or plugin/pooled and expected counts.
+For mined negatives, separate mode gives them an independent uncorrected loss; pooled mode can reduce their relative influence.
 
 See the [API contract](docs/api.md), [design and compatibility](docs/design.md), and [development checks](CONTRIBUTING.md).
 
