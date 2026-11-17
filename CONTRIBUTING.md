@@ -7,7 +7,7 @@
 | Setting | Decision / source of truth |
 | --- | --- |
 | Deliverable | Python retrieval-training library, `cosmea` |
-| Environment | CPU, single training process, finite map-style datasets; locally verified on macOS arm64. Ubuntu CI is configured but has not yet run on a hosted runner |
+| Environment | CPU, single training process, finite map-style datasets; locally verified on macOS arm64; Ubuntu 24.04 runs the same checks in [GitHub Actions](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml) |
 | Runtime | Development Python is pinned in `.python-version`; supported minimum is declared in `pyproject.toml` |
 | Tools | mise manages uv and Betterleaks versions in `mise.toml`; uv manages Python and the virtual environment |
 | Dependencies | Compatibility ranges and extras in `pyproject.toml`; exact development resolution in committed `uv.lock` |

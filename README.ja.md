@@ -120,4 +120,4 @@ trainer.train()
 - [Ma & Collins, 2018 — Conditional NCE](https://arxiv.org/abs/1809.01812)
 - [Khrylchenko et al., 2025 — Correcting the LogQ Correction](https://arxiv.org/abs/2507.09331)／[著者コード](https://github.com/NonameUntitled/logq/tree/f48221cad05612a2558966288e77020e61f3ff01)
 
-ライセンス・出典の状態は [NOTICE](NOTICE.md)。公開リリースはまだ行っていません。CIは設定済みで、ホスト上の実行は未確認です。
+ライセンス・出典の状態は [NOTICE](NOTICE.md)。公開リリースはまだ行っていません。ホスト上の検証結果は [GitHub Actions](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml) で確認できます。

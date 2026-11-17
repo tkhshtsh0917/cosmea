@@ -7,7 +7,7 @@
 | 項目 | 採用構成・正本 |
 | --- | --- |
 | 目的・成果物 | 検索モデルの学習用Pythonライブラリ `cosmea` |
-| 対象環境 | CPU・単一学習プロセス・有限map-style dataset。macOS arm64でローカル検証。Ubuntu CIは設定済みだがホスト実行は未確認 |
+| 対象環境 | CPU・単一学習プロセス・有限map-style dataset。macOS arm64でローカル検証。Ubuntu 24.04では[GitHub Actions](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml)で同じ検査を実行 |
 | 言語・版 | 開発用Pythonの固定版は `.python-version`、対応下限は `pyproject.toml` |
 | ツール・依存管理 | miseが `mise.toml` のuv・Betterleaksを管理。uvがPythonと仮想環境を管理 |
 | 依存の正本 | 互換範囲とextrasは `pyproject.toml`、開発環境の解決結果はGit管理する `uv.lock` |

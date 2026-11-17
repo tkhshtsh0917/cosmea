@@ -119,4 +119,4 @@ Reviewed and reorganized from a user-supplied st-logq prototype. This implementa
 - [Ma & Collins, 2018 — Conditional NCE](https://arxiv.org/abs/1809.01812)
 - [Khrylchenko et al., 2025 — Correcting the LogQ Correction](https://arxiv.org/abs/2507.09331) / [author code at the inspected commit](https://github.com/NonameUntitled/logq/tree/f48221cad05612a2558966288e77020e61f3ff01)
 
-See [NOTICE](NOTICE.md) for licensing/provenance status. No public release has been made. Hosted CI is configured but has not yet been run.
+See [NOTICE](NOTICE.md) for licensing/provenance status. No public release has been made. Hosted check results are available in [GitHub Actions](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml).
