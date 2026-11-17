@@ -16,7 +16,7 @@
 | Compatibility | Preserve exported class names and metadata ordering. Changes to proposal measures, masks or defaults require corresponding contract updates |
 | Resource limits | `0 <= K <= M`, `1 <= B <= N`, positive cached chunk size. Detailed compute and memory scope in [design](docs/design.md) |
 | Public documentation | English README, API, design and contributor guide, with Japanese counterparts |
-| Distribution | Wheel and sdist built locally. No registry, deployment or public release configured; project license is not yet assigned, see [NOTICE](NOTICE.md) |
+| Distribution | Apache-2.0; [LICENSE](LICENSE) and [NOTICE](NOTICE.md) are included in wheel and sdist. No registry, deployment or package release configured |
 | Acceptance | Checks pass; public docs are self-contained; artifacts exclude private records. No claim of real-data performance |
 | Git permissions | Local edits/tests are within the assigned development task. Commit, history rewrite, push, tag and publication each need explicit maintainer authorization; none is implied by a passing check |
 
@@ -57,7 +57,9 @@ Maintain English and Japanese docs together. Keep public files free of personal 
 
 ## Builds and future releases
 
-`mise run build` produces one wheel and sdist in `dist`; `mise run audit` inspects both. Remove stale build artifacts when changing versions. Third parties can build from the sdist without private inputs. Before a future release, a maintainer must choose a project license and release destination, authorize the Git/release actions, confirm hosted CI, inspect public history/author identity, and record artifact checksums. Publishing is outside this development task.
+`mise run build` produces one wheel and sdist in `dist`; `mise run audit` inspects both, including the Apache-2.0 metadata and matching LICENSE/NOTICE contents. The SPDX expression and license-file list are declared in `pyproject.toml`. The build backend requires setuptools 77.0.3 or later for PEP 639 metadata support; the development version is locked in `uv.lock`.
+
+Remove stale build artifacts when changing versions. Third parties can build from the sdist without private inputs. Before a future release, a maintainer must choose a release destination, authorize the Git/release actions, confirm hosted CI, inspect public history/author identity, verify license and notice inclusion, and record artifact checksums. Publishing is outside this development task.
 
 ## Secret scanning and readable examples
 

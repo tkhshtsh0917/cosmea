@@ -77,3 +77,41 @@ def test_display_math_does_not_hide_personal_paths(audit):
     errors = audit.inspect_text("README.md", text.encode(), published=audit.PUBLIC_DOCS)
 
     assert any("machine-specific" in error for error in errors)
+
+
+@pytest.mark.parametrize("prefix", ["", "cosmea-0.1.0.dev0.dist-info/licenses/"])
+def test_artifact_license_metadata_and_payloads_match_source(audit, prefix):
+    metadata = (
+        b"Metadata-Version: 2.4\nLicense-Expression: Apache-2.0\nLicense-File: LICENSE\nLicense-File: NOTICE.md\n\n"
+    )
+    entries = {prefix + name: (audit.ROOT / name).read_bytes() for name in ("LICENSE", "NOTICE.md")}
+
+    assert audit.inspect_license_metadata("artifact", metadata, entries, prefix) == []
+
+
+@pytest.mark.parametrize(
+    "defect,expected",
+    [
+        ("expression", "incorrect License-Expression"),
+        ("declaration", "License-File must declare"),
+        ("missing", "missing license payload NOTICE.md"),
+        ("modified", "license payload differs from source LICENSE"),
+    ],
+)
+def test_artifact_license_defects_are_rejected(audit, defect, expected):
+    metadata = (
+        b"Metadata-Version: 2.4\nLicense-Expression: Apache-2.0\nLicense-File: LICENSE\nLicense-File: NOTICE.md\n\n"
+    )
+    entries = {name: (audit.ROOT / name).read_bytes() for name in ("LICENSE", "NOTICE.md")}
+    if defect == "expression":
+        metadata = metadata.replace(b"Apache-2.0", b"MIT")
+    elif defect == "declaration":
+        metadata = metadata.replace(b"License-File: NOTICE.md\n", b"")
+    elif defect == "missing":
+        del entries["NOTICE.md"]
+    else:
+        entries["LICENSE"] = b"A changed license body"
+
+    errors = audit.inspect_license_metadata("artifact", metadata, entries, "")
+
+    assert any(expected in error for error in errors)

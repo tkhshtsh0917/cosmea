@@ -12,6 +12,7 @@ import re
 import subprocess
 import tarfile
 import zipfile
+from email.parser import BytesParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +21,7 @@ PRIVATE_LINK = re.compile(r"\]\([^\n)]*(?:\.private/|research/|file://)")
 TEXT_SUFFIXES = {".md", ".py", ".toml", ".yml", ".yaml", ".txt", ".json", ".in", ".lock"}
 EXCLUDED = {".git", ".private", ".venv", ".mypy_cache", ".ruff_cache", ".pytest_cache", "__pycache__", "build", "dist"}
 PUBLIC_DOCS = {
+    "LICENSE",
     "README.md",
     "README.ja.md",
     "CONTRIBUTING.md",
@@ -89,8 +91,32 @@ def inspect_public(files: list[Path]) -> list[str]:
         name = path.relative_to(ROOT).as_posix()
         if set(path.relative_to(ROOT).parts) & {".private", "research"}:
             errors.append(f"{name}: private material is eligible for publication")
-        if path.suffix in TEXT_SUFFIXES:
+        if path.suffix in TEXT_SUFFIXES or name == "LICENSE":
             errors.extend(inspect_text(name, path.read_bytes(), published=published))
+    return errors
+
+
+def inspect_license_metadata(
+    name: str,
+    metadata: bytes,
+    entries: dict[str, bytes],
+    license_prefix: str,
+) -> list[str]:
+    """Require Apache-2.0 metadata and verbatim license/notice payloads in an artifact."""
+    headers = BytesParser().parsebytes(metadata, headersonly=True)
+    errors = []
+    if headers.get("License-Expression") != "Apache-2.0":
+        errors.append(f"{name}: missing or incorrect License-Expression")
+    required = {"LICENSE", "NOTICE.md"}
+    if set(headers.get_all("License-File", [])) != required:
+        errors.append(f"{name}: License-File must declare LICENSE and NOTICE.md")
+    for filename in sorted(required):
+        content = entries.get(license_prefix + filename)
+        source = ROOT / filename
+        if content is None:
+            errors.append(f"{name}: missing license payload {filename}")
+        elif not source.is_file() or content != source.read_bytes():
+            errors.append(f"{name}: license payload differs from source {filename}")
     return errors
 
 
@@ -106,6 +132,13 @@ def inspect_artifacts() -> list[str]:
         entries = {name: archive.read(name) for name in archive.namelist() if not name.endswith("/")}
         if "cosmea/functional.py" not in entries:
             errors.append("wheel: missing runtime package")
+        metadata_paths = [name for name in entries if name.endswith(".dist-info/METADATA")]
+        if len(metadata_paths) != 1:
+            errors.append("wheel: expected exactly one package METADATA")
+        else:
+            metadata_path = metadata_paths[0]
+            license_prefix = metadata_path.removesuffix("METADATA") + "licenses/"
+            errors.extend(inspect_license_metadata("wheel", entries[metadata_path], entries, license_prefix))
         for name in entries:
             if not (name.startswith("cosmea/") or ".dist-info/" in name):
                 errors.append(f"wheel: unexpected payload {name}")
@@ -121,6 +154,10 @@ def inspect_artifacts() -> list[str]:
             assert stream is not None
             name = member.name.split("/", 1)[1]
             entries[name] = stream.read()
+        if "PKG-INFO" not in entries:
+            errors.append("sdist: missing PKG-INFO")
+        else:
+            errors.extend(inspect_license_metadata("sdist", entries["PKG-INFO"], entries, ""))
         required = PUBLIC_DOCS | {
             "mise.toml",
             ".python-version",

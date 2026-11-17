@@ -122,4 +122,8 @@ Cosmea builds on the following research. It adapts the sampling and loss calcula
 - [Ma & Collins, 2018 — Conditional NCE](https://arxiv.org/abs/1809.01812)
 - [Khrylchenko et al., 2025 — Correcting the LogQ Correction](https://arxiv.org/abs/2507.09331) / [author code at the inspected commit](https://github.com/NonameUntitled/logq/tree/f48221cad05612a2558966288e77020e61f3ff01)
 
-See [NOTICE](NOTICE.md) for licensing/provenance status. No package release has been made. Hosted check results are available in [GitHub Actions](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml).
+## License
+
+Cosmea is licensed under [Apache-2.0](LICENSE). Dependencies retain their own licenses; see [NOTICE](NOTICE.md) for third-party references.
+
+No package release has been made. Hosted check results are available in [GitHub Actions](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml).

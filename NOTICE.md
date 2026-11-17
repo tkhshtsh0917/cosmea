@@ -1,6 +1,10 @@
 # Licensing and third-party references
 
-A license for Cosmea has not yet been selected. This file describes third-party references and does not itself grant an open-source license for Cosmea.
+Cosmea
+
+Copyright 2026 The Cosmea contributors.
+
+Cosmea is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the terms. This notice provides attribution and does not modify the license.
 
 Sentence Transformers, PyTorch and NumPy are installed as separate dependencies. They retain their own licenses and notices; their source distributions are not bundled in Cosmea's wheel or source archive.
 
@@ -8,7 +12,7 @@ The research references are listed in the README. The [inspected author implemen
 
 ## 日本語
 
-Cosmea自体のライセンスは未選定です。この文書は第三者資料の扱いを説明するもので、Cosmeaのオープンソースライセンスを付与するものではありません。
+CosmeaはApache License, Version 2.0で提供します。条件は[LICENSE](LICENSE)を参照してください。この文書は出典を説明するもので、ライセンスを変更するものではありません。
 
 Sentence Transformers、PyTorch、NumPyは別の依存ライブラリとしてインストールされ、それぞれのライセンス・表示が適用されます。これらのソース配布物はCosmeaのwheel・source archiveへ同梱していません。
 
