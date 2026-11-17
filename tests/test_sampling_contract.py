@@ -33,6 +33,26 @@ def test_singleton_with_only_mined_negatives_is_uncorrected_softmax(combine):
     assert scores.grad.tolist()[0] == pytest.approx([-1 / (1 + math.e), 1 / (1 + math.e)])
 
 
+def test_pooled_yi_only_corrects_positives_in_rows_with_eligible_sampled_negatives():
+    lab = metadata([0, 1, 0, 5, 6, 7], [3, 4, 3, 0, 0, 0], [0, 0, 0, 2, 2, 2], [7, 7, 8], total=1000)
+    rows = torch.tensor([2, 0])
+    scores = torch.tensor([[0, 0, 2, 1, 1, 1], [2, 0, 0, 1, 1, 1]], dtype=torch.float64, requires_grad=True)
+    loss = mixed_negative_logq_loss(scores, lab, rows=rows, combine="pooled", mask_same_document=True)
+    extras = torch.exp(scores[:, 3:]).sum(dim=1)
+    expected = torch.stack(
+        [
+            torch.log1p((scores[0, 1].exp() / 0.008 + extras[0]) * 0.006 / scores[0, 2].exp()),
+            torch.log1p(extras[1] / scores[1, 0].exp()),
+        ]
+    )
+
+    torch.testing.assert_close(loss, expected)
+    torch.testing.assert_close(
+        torch.autograd.grad(loss.sum(), scores)[0],
+        torch.autograd.grad(expected.sum(), scores)[0],
+    )
+
+
 def test_separate_extras_have_an_independent_loss_and_frequency_invariant_gradient():
     lab = metadata([0, 1, 7, 8], [1, 4, 0, 0], [0, 0, 2, 2], [0, 1])
     gradients = []
@@ -164,21 +184,34 @@ def test_uniform_only_correction_uses_corpus_proposal_without_row_frequency():
         assert actual.item() == pytest.approx(expected)
 
 
-def test_yi_separate_uniform_correction_cancels_on_supported_positives():
+def test_yi_separate_source_strengths_match_handwritten_value_and_gradient():
+    """The common uniform offset cancels even when it is far larger than the logits."""
     lab = metadata([0, 1, 2], [2, 4, 0], [0, 0, 1], [0, 1])
-    scores = torch.tensor([[2.0, 0.5, -0.3]], dtype=torch.float64)
-    expected = (math.log1p(math.exp(-1.5)) + math.log1p(math.exp(-2.3))) / 2
+    scores = torch.tensor([[2.0, 0.5, -0.3]], dtype=torch.float64, requires_grad=True)
+    pos, in_batch, uniform = scores[0]
+    expected = (torch.log1p(torch.exp(in_batch - pos) * 0.5**0.5) + torch.log1p(torch.exp(uniform - pos))) / 2
 
     loss = mixed_negative_logq_loss(
-        scores, lab, rows=torch.tensor([0]), in_batch_logq_strength=0, uniform_logq_strength=1
+        scores, lab, rows=torch.tensor([0]), in_batch_logq_strength=0.5, uniform_logq_strength=1e20
     )
-    assert loss.item() == pytest.approx(expected)
+    torch.testing.assert_close(loss[0], expected)
+    torch.testing.assert_close(
+        torch.autograd.grad(loss.sum(), scores)[0],
+        torch.autograd.grad(expected, scores)[0],
+    )
 
+
+def test_yi_separate_uniform_support_is_checked_when_correction_is_requested():
+    lab = metadata([0, 1, 2], [2, 4, 0], [0, 0, 1], [0, 1])
+    scores = torch.tensor([[2.0, 0.5, -0.3]], dtype=torch.float64)
     lab["cand_in_corpus"][0] = False
     with pytest.raises(ValueError, match="every positive ID"):
         mixed_negative_logq_loss(scores, lab, rows=torch.tensor([0]), logq_strength=0, uniform_logq_strength=1)
     loss = mixed_negative_logq_loss(scores, lab, rows=torch.tensor([0]), uniform_logq_strength=0)
     assert torch.isfinite(loss).all()
+    lab["cand_in_corpus"] = torch.tensor([True, True, False])
+    with pytest.raises(ValueError, match="uniform negative has zero proposal support"):
+        mixed_negative_logq_loss(scores, lab, rows=torch.tensor([0]))
 
 
 @pytest.mark.parametrize(
