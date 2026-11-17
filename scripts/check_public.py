@@ -28,6 +28,8 @@ PUBLIC_DOCS = {
     "docs/ja/api.md",
     "docs/design.md",
     "docs/ja/design.md",
+    "examples/README.md",
+    "examples/README.ja.md",
     "NOTICE.md",
 }
 
@@ -61,7 +63,10 @@ def inspect_text(name: str, data: bytes, *, published: set[str] | None = None) -
     if PRIVATE_LINK.search(text):
         errors.append(f"{name}: private documentation dependency")
     if published is not None and name.endswith(".md"):
-        for target in re.findall(r"\]\(([^\n)]+)\)", text):
+        # Display math can contain ](...) without defining a Markdown link.
+        # Privacy checks above still inspect the complete, unmodified content.
+        navigation = re.sub(r"(?ms)^\$\$[ \t]*\n.*?^\$\$[ \t]*$", "", text)
+        for target in re.findall(r"\]\(([^\n)]+)\)", navigation):
             target = target.strip("<>").split("#")[0]
             if not target or "://" in target or target.startswith("mailto:"):
                 continue
@@ -122,6 +127,7 @@ def inspect_artifacts() -> list[str]:
             "uv.lock",
             "scripts/check_public.py",
             "examples/train_example.py",
+            "examples/train_from_csv.py",
             "tests/test_integration.py",
         }
         for name in sorted(required - entries.keys()):

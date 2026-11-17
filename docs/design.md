@@ -1,61 +1,109 @@
-# Design, objectives and compatibility
+# How Cosmea works
 
-[日本語](ja/design.md)
+[日本語](ja/design.md) · [API guide](api.md)
 
-## Responsibilities
+## Why mix negative examples?
 
-`src/cosmea` contains runtime code, `examples` runnable usage, `tests` behavioral and mathematical verification, `experiments` optional comparisons, and `scripts` development tooling. Training integration belongs to the `train` dependency extra; tooling belongs to `dev`. Public documentation is sufficient to use, build and evaluate the package.
+A retrieval model learns to give a query's positive item a higher score than comparison items. Using the other positives in the same batch is convenient, but frequently clicked items then appear more often as comparisons. Items without clicks may never appear at all.
 
-A collator sees the raw batch and adds K uniform corpus candidates plus metadata. The loss receives scaled scores and applies correction. Logit correction cannot be implemented by a sampler alone. The standard random row sampler remains responsible for selecting B training rows.
+Cosmea combines two sources: the other positives in the batch, and items drawn uniformly from the searchable collection. This is **Mixed Negative Sampling (MNS)**. The uniform part can include items without feedback.
 
-## Proposal measures
+**logQ correction** adjusts scores according to how candidates were sampled. It requires both sampling information and a loss calculation, so a sampler alone is not enough. The row sampler chooses training examples, the collator adds corpus candidates and counts, and the loss applies the correction.
 
-Let N be training rows, B batch rows, M distinct corpus items, K uniform items, p_i the row's positive, and c_d its dataset count. For a fixed row i, n=B−1 other rows are drawn from N−1, with c'_id=c_d−1[d=p_i]. Corpus draws are independent of row sampling.
+This corrects how negative examples are drawn. It does not identify items that users would have clicked if they had been shown something else. Exposure bias in the positive log therefore needs separate treatment.
 
-Expected multiplicity and pooled inclusion probability are:
+## “How many times” and “at least once” are different
 
-```
-e_i(d) = (B-1) * c'_id/(N-1) + (K/M) * 1[d in corpus]
-pi_in_i(d) = 1 - choose(N-1-c'_id, B-1)/choose(N-1, B-1)
-pi_i(d) = 1 - (1-pi_in_i(d)) * (1-(K/M)*1[d in corpus])
-```
+Suppose we draw two entries from `[a, b, b]` without replacement. On average, a appears $2/3$ times and b appears $4/3$ times. The chance of appearing at least once is $2/3$ for a and $1$ for b.
 
-Define the in-batch contribution as zero for B=N=1, and the uniform contribution as zero for K=0. Retain duplicate occurrences when dividing by expected multiplicity; keep one eligible occurrence per item when dividing by inclusion probability. For example, drawing two of `[a,b,b]` gives expected multiplicities 2/3 and 4/3 but inclusion probabilities 2/3 and 1. Deduplicating b and still dividing by 4/3 would undercount its contribution.
+Cosmea supports both calculations:
 
-The pooled negative-partition estimator is unbiased only for its supported item set, with the specified sampling design and positive-item exclusion; query-dependent masks and mined negatives are outside this claim. Taking a logarithm or ratio generally reintroduces finite-sample bias.
+- `expected_count` keeps repeated occurrences and divides their contributions by the expected count.
+- `inclusion` keeps one eligible occurrence per item and divides by its chance of appearing at least once.
 
-## Objectives and defaults
+Mixing these rules gives the wrong weight. For example, keeping only one b and still dividing by $4/3$ makes its contribution too small. Candidates excluded by a mask are removed before deduplication.
 
-Scores F have shape `(B,C)`, C=B(1+H)+K for H extra negative columns. Compute `F = scale * similarity` before subtracting `lambda * log q`. Correcting similarity before scaling changes the objective. Masks remove candidates from the normalization set.
+## Three loss options
 
-The default yi + expected_count + separate uses the empirical iid proposal c_d/N. The actual collator samples without replacement, so iid ranking-NCE consistency results are not guarantees for this implementation. yi+inclusion is rejected. Separate uniform yi requires every positive ID in the corpus. Fixed-source mixtures, filtering and deduplication also change theoretical assumptions.
+| Variant | What changes | How to interpret it |
+| --- | --- | --- |
+| `yi` (default) | Corrects positive and negative scores. By default, computes and averages losses for the two sources separately | Uses an independent-draw approximation based on training counts |
+| `plugin` | Keeps the positive score uncorrected and estimates the total negative contribution | A useful way to match the correction to the actual draw procedure |
+| `improved` | Multiplies a score difference by a confidence weight whose gradient is stopped | Has the same first gradient as plugin with identical settings; loss values and higher derivatives differ |
 
-Plugin leaves the positive uncorrected. If z=log(Zhat_neg), its loss is `softplus(z-F_positive)`. Improved uses `sg(sigmoid(z-F_positive)) * (z-F_positive)`, where sg stops gradients through the weight. With the same z, both have identical first derivatives, but different values and higher-order derivatives. This is an adaptation of the cited confidence-weighted formulation, not a literal reproduction of the paper's Q-prime or the author's candidate construction.
+The actual collator draws without replacement. Thus, a consistency result proved for independent draws does not automatically apply to the default yi implementation. yi does not support `inclusion`. With a separate uniform yi loss, every positive must be present in the corpus.
 
-Under ideal iid negative sampling and an expressive score model, subtracting logQ in the loss targets the observed conditional item distribution; uncorrected learning targets a probability ratio. That does not remove exposure bias already present in the positive log or guarantee lower popularity concentration. Defaults are starting points, not empirically established superiority.
+Under suitable sampling assumptions, the average estimate of the total negative contribution is correct. This property is called **unbiasedness**. Taking a logarithm or a ratio can introduce bias again, so it does not imply unbiased loss gradients. Query-based filtering and manually supplied negatives also change the assumptions.
 
-## Bounds and numerical behavior
+Under ideal independent sampling and a sufficiently expressive model, logQ correction targets the item distribution in the observed positive log; uncorrected learning targets a probability ratio. Neither statement establishes lower popularity concentration in a real application.
 
-Require `0 <= K <= M`, `1 <= B <= N` and positive integer cached chunk size. Invalid options/IDs/counts raise errors. An unknown positive is not assigned an artificial count. An empty negative pool returns zero loss and gradient. Separate mode averages only active sources. Half/bfloat16 scores are promoted for loss arithmetic; mixed-precision model training remains unverified.
+## Compare configurations fairly
 
-All corpus identity indexing is held in memory, O(M), in addition to text storage. Ordinary score memory is O(B*C); Cached mode uses b query rows at a time, giving O(b*C) score memory while candidate embeddings remain cached. Exact inclusion uses a product over B−1 draws for every queried candidate, O((B−1)*b*C) arithmetic per chunk. No automatic memory quota or corpus streaming is implemented. Use expected counts as the initial large-batch setting.
+To compare against ordinary pooled MNRL, use `logq_strength=0` and `combine="pooled"`, and match the candidate pool and masks. Setting the correction strength to zero alone does not change separate losses into one pooled loss.
 
-## Compatibility and evaluation
+For quality evaluation, use training-only counts, held-out queries and the full corpus. With time-dependent logs, split by time. Report retrieval quality such as Recall/NDCG, results for popular and less popular items, coverage and concentration. Repeat across seeds and include uncertainty estimates. Synthetic checks verify calculations and interfaces; real-data improvement is unverified.
 
-The package depends on ST 6.3 internal collator helpers and GradCache, so the supported ranges are ST `>=6.3,<6.4` and PyTorch `>=2.15,<2.16`; exact development versions are locked. ST v5 compatibility is not claimed. Updating these ranges requires Trainer metadata and cached-gradient integration checks.
+The optional synthetic experiment is described in [CONTRIBUTING.md](../CONTRIBUTING.md#offline-example-and-optional-experiment). Its head is the top $\lceil 0.1M\rceil$ items by popularity, with ties resolved by original item order; the tail is the remainder. At least two items are required. Top-k uses $\min(k,M)$ slots, including the denominator of unseen-item share. Invalid settings that give no training steps or too many uniform samples are rejected.
 
-NO_DUPLICATES, weighted/grouped samplers, DDP padding, cross-device gathering, streaming/time-window counts and multiple datasets require additional proposal definitions and verification. GPU execution is unverified. Use consistent ID spaces, including explicit IDs for mined negative columns.
+## Resource and compatibility limits
 
-Evaluate real-data quality with temporal splits, train-only counts, full-corpus Recall/NDCG, popularity buckets, coverage and concentration, with multiple seeds and uncertainty estimates. Match candidate pools, masks and softmax grouping across baselines. `lambda=0` alone does not reproduce ordinary pooled MNRL. The synthetic world tests finite-sample coverage, not a causal exposure policy.
+The collection and its ID index are held in memory. There is no streaming corpus or automatic memory quota. The batch must contain between 1 and $N$ rows; the uniform sample count must be between 0 and $M$. Invalid IDs, counts and options raise errors. Empty negative sets give zero loss and gradient. Separate mode averages only sources with usable negatives.
 
-## Optional synthetic experiment
+With $B$ query rows and $C$ candidates, ordinary score memory is $O(BC)$. Cached mode computes $b$ query rows at a time, so score memory is $O(bC)$; candidate embeddings still stay cached. The ID index uses $O(M)$ memory in addition to text. Exact inclusion takes $O((B-1)bC)$ arithmetic per chunk, so expected counts are the initial choice for large batches.
 
-After setup, run the comparison harness from the checkout:
+Half-precision scores are promoted inside the loss to make the calculation more stable. Mixed-precision model training remains unverified.
 
-```bash
-mise exec -- uv run --frozen --no-sync python experiments/toy_two_tower.py --seeds 3 --out results.json
-```
+Cosmea uses Sentence Transformers 6.3 collator helpers and GradCache. Supported ranges are ST `>=6.3,<6.4` and PyTorch `>=2.15,<2.16`; ST v5 compatibility is not claimed. CPU with one training process is verified. GPU, DDP, cross-device candidate sharing, weighted/grouped samplers, `NO_DUPLICATES`, streaming counts and multiple datasets need additional sampling definitions or validation.
 
-This optional long-running experiment is separate from `mise run check`. It creates synthetic click logs and reports KL, retrieval, tail and coverage metrics; its output file records arguments and seed-level results. Record the source version, environment and evaluation conditions alongside any retained output. The full default experiment has not been rerun for this revision, and no speedup or real-data advantage is claimed.
+## Formula reference
 
-For experiment metrics, the head contains exactly `ceil(0.1 * M)` items sorted by descending popularity; ties use original item order. The tail is its complement, requiring at least two items. Top-k uses `min(k, M)` slots, including the denominator of unseen-item share. Invalid empty-training configurations and oversized uniform draws are rejected before training.
+You can use the library without implementing these formulas. They explain precisely which weights the loss uses.
+
+### Candidate weights
+
+| Symbol | Meaning |
+| --- | --- |
+| $N, B$ | Total training rows / rows in the batch |
+| $M, K$ | Distinct corpus items / uniform draws |
+| $p_i$ | Positive item for query row $i$ |
+| $c_d$ | Number of training rows whose positive is item $d$ |
+| $\mathbf{1}[A]$ | 1 when condition $A$ holds, otherwise 0 |
+
+After fixing row $i$, the remaining $B-1$ rows are sampled from $N-1$ rows. The remaining count is $c'_{id}=c_d-\mathbf{1}[d=p_i]$. Corpus draws are independent of the row draw. For plugin/improved, the pooled expected count and inclusion probability are:
+
+$$
+e_i(d)=\frac{(B-1)c'_{id}}{N-1}+\frac{K}{M}\mathbf{1}[d\in\mathrm{corpus}]
+$$
+
+$$
+\pi_i^{\mathrm{batch}}(d)=1-\frac{\binom{N-1-c'_{id}}{B-1}}{\binom{N-1}{B-1}},\qquad
+\pi_i(d)=1-\left(1-\pi_i^{\mathrm{batch}}(d)\right)
+\left(1-\frac{K}{M}\mathbf{1}[d\in\mathrm{corpus}]\right).
+$$
+
+The in-batch term is defined as zero when $B=N=1$, and the corpus term as zero when $K=0$. These row-dependent weights form a $(b,C)$ matrix for a chunk. The negative-total estimate is unbiased only over the supported item set, with positive-item exclusion and the specified sampling procedure. A supported item has a nonzero chance of being drawn.
+
+### Corrected scores and gradients
+
+Let $F_{id}=\mathrm{scale}\cdot\mathrm{similarity}(i,d)$. Scores have shape $(B,C)$, where $C=B(1+H)+K$ and $H$ is the number of extra negative columns. Correction is subtracted **after** scaling:
+
+$$
+\widetilde F_{id}=F_{id}-\lambda\log q_i(d),\qquad \lambda=\texttt{logq\_strength}.
+$$
+
+For the negative terms, plugin/improved use $e_i(d)$ or $\pi_i(d)$ as $q_i(d)$, according to `q_measure`. The yi expected-count calculation instead uses the empirical independent-draw probability $c_d/N$, combined with source counts and corpus sampling. Extra mined-negative columns receive no correction.
+
+Let $\mathcal V_i$ be the eligible negative entries after masking and, for inclusion mode, deduplication. The corrected negative sum and its logarithm are:
+
+$$
+\widehat Z_i^{-}=\sum_{d\in\mathcal V_i}\exp(\widetilde F_{id}),\qquad z_i=\log\widehat Z_i^{-}.
+$$
+
+In pooled mode, $\mathcal V_i$ includes all candidate sources. In separate mode, each source is normalized on its own before averaging active losses. For plugin and improved, with positive score $F_{i,p_i}$:
+
+$$
+\ell_i^{\mathrm{plugin}}=\log\left(1+\exp(z_i-F_{i,p_i})\right),\qquad
+\ell_i^{\mathrm{improved}}=\operatorname{sg}\!\left[\sigma(z_i-F_{i,p_i})\right](z_i-F_{i,p_i}).
+$$
+
+Here $\sigma(x)=1/(1+e^{-x})$ and $\operatorname{sg}$ stops the gradient through the confidence weight. Both give the same first derivative for identical negative sums. This is an adaptation of the confidence-weighted formulation, not a literal reproduction of the paper's Q-prime or author scripts. Empty negative sets are handled separately as zero loss and gradient.

@@ -27,6 +27,9 @@ The package version is defined by `project.version`; the exported `__version__` 
 Install [mise](https://mise.jdx.dev/getting-started.html), inspect the checkout configuration, then run:
 
 ```bash
+git clone https://github.com/tkhshtsh0917/cosmea.git
+cd cosmea
+
 mise trust
 mise install
 mise run setup
@@ -61,3 +64,17 @@ Maintain English and Japanese docs together. Keep public files free of personal 
 `mise run secrets` runs [Betterleaks](https://github.com/betterleaks/betterleaks/tree/v1.10.1) (MIT), pinned in `mise.toml`, after the build. It scans the public file inventory, unpacked wheel/sdist contents, and all locally available Git refs when commits exist. CI checks out full history; shallow local clones must fetch missing history. An uncommitted repository or source archive reports the absence of history explicitly. Detection uses the pinned built-in rules, with provider validation disabled; findings and scanner errors fail the check. Redacted JSON reports stay in ignored `build/security/`. No blanket allowlist or baseline is applied. This is pattern detection, not a guarantee that all secrets are absent.
 
 Format multiline calls with one argument per line and a trailing comma. Apply this to public code examples as well as source code; keep short, simple calls on one line when that is clearer. Split grouped imports when a long import would impede reading.
+
+## Offline example and optional experiment
+
+After `mise run setup`, `mise run smoke` runs both ordinary and cached training with a tiny local BERT and synthetic data. No pretrained model download is needed. `mise run check` also includes these runs.
+
+For a longer synthetic comparison:
+
+```bash
+mise exec -- uv run --frozen --no-sync python experiments/toy_two_tower.py --seeds 3 --out results.json
+```
+
+This optional experiment is not part of the standard checks. It saves arguments and seed-level results; retain the source revision and environment alongside any results you compare. The full default experiment has not been rerun for this revision. See [design](docs/design.md) for metric definitions.
+
+Repository layout: `src/cosmea` contains the library, `examples` runnable usage, `tests` verification, `experiments` optional comparisons, and `scripts` development checks.

@@ -27,6 +27,9 @@ package versionの正本は `project.version`。公開 `__version__` も一致�
 [mise](https://mise.jdx.dev/getting-started.html) を導入し、checkoutの設定を確認してから実行する。
 
 ```bash
+git clone https://github.com/tkhshtsh0917/cosmea.git
+cd cosmea
+
 mise trust
 mise install
 mise run setup
@@ -61,3 +64,17 @@ CIも同じsetup/checkをread-only権限で実行する。workflowの作成を�
 `mise run secrets`はビルド後に[Betterleaks](https://github.com/betterleaks/betterleaks/tree/v1.10.1)（MIT）を実行する。版は`mise.toml`で固定し、公開予定ファイル、展開したwheel／sdist、commitがあればローカルの全refのGit履歴を検査する。CIは全履歴をcheckoutし、ローカルのshallow cloneは不足履歴を取得する。初回commit前やsource archiveでは履歴がないことを明示する。固定版の組込み規則を使い、providerへの認証情報検証は無効にする。検出・実行エラーはいずれも検査失敗となる。マスク済みJSONレポートはGit除外された`build/security/`に保存し、包括的なallowlistやbaselineは使わない。パターン検出であり、秘密情報が一切ないことの保証ではない。
 
 複数行の関数呼出しは1行1引数と末尾カンマを基本にする。公開コード例にも同じ規約を適用し、短く単純な呼出しは読みやすければ1行に収める。長いimportも項目ごとに改行する。
+
+## オフライン学習例と任意の実験
+
+`mise run setup`の後、`mise run smoke`で通常版・Cached版の学習例を実行できます。小さなBERTと合成データをローカルで作るため、学習済みモデルのダウンロードは不要です。`mise run check`にもこの検証を含めています。
+
+時間をかけて合成データ上の設定を比較する場合は、次を実行します。
+
+```bash
+mise exec -- uv run --frozen --no-sync python experiments/toy_two_tower.py --seeds 3 --out results.json
+```
+
+これは通常の検査とは別の任意実験です。出力には引数とseedごとの結果を保存します。比較に使う場合はソースの版と環境も一緒に記録してください。この改訂では既定設定の実験全体を再実行していません。指標の定義は[設計の説明](docs/ja/design.md)を参照してください。
+
+コードの置き場は、ライブラリ本体が`src/cosmea`、利用例が`examples`、検証が`tests`、任意実験が`experiments`、開発用の検査が`scripts`です。

@@ -4,25 +4,27 @@
 
 Cosmea adds **logQ correction and Mixed Negative Sampling (MNS)** to Sentence Transformers. The standard random row sampler selects training examples; a collator adds uniform corpus negatives and sampling metadata; the loss corrects temperature-scaled logits.
 
-The name comes from *Cosmea*, a synonym of Cosmos, and the red flower's Japanese meaning “harmony”: combining negative distributions with matching corrections. [Kew nomenclature](https://powo.science.kew.org/taxon/8407-1) / [Chiba Prefecture flower symbolism](https://www.pref.chiba.lg.jp/ryuhan/pbmgm/zukan/kaki/cosmos.html).
+The name *Cosmea* comes from cosmos flowers and their association with harmony.
 
 Development version `0.1.0.dev0`. CPU mathematical and integration checks were run on 2026-11-17. Real-data effectiveness is unverified. Correcting negative sampling does not guarantee reduced popularity concentration or causal fairness.
 
-## Setup and offline example
+## Installation
 
-From this checkout, with [mise](https://mise.jdx.dev/getting-started.html) installed:
+In your Python project, install Cosmea directly from GitHub with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-mise trust
-mise install
-mise run setup
-mise run smoke
-mise run check
+uv add "cosmea[train] @ git+https://github.com/tkhshtsh0917/cosmea"
 ```
 
-mise manages development tools; uv manages dependencies and Python. See [contributing](CONTRIBUTING.md) for version ownership and individual checks. For library use, `pip install -e '.[train]'` is also supported. The tiny-BERT example generates its model and synthetic data locally; after dependency installation it needs no model downloads. This is a local checkout, not an instruction to install a published package named cosmea.
+The `train` extra includes the dependencies needed by `SentenceTransformerTrainer`. If you only need the collator and loss functions, install `cosmea` without `[train]`. Python 3.12 is used in our checks; supported dependency ranges are listed in the [API guide](docs/api.md).
+
+uv records the resolved Git commit in your project's `uv.lock`. To choose a specific revision, add `--rev` followed by a commit SHA to the command above.
+
+For contributing, running the offline example, or building the package, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Use your own data
+
+For a complete script that reads your training data, see the [CSV example](examples/README.md).
 
 Prepare a model, a training dataset with ordered columns `query, positive, query_id, item_id`, and aligned corpus text/ID lists:
 
@@ -76,7 +78,9 @@ trainer = SentenceTransformerTrainer(
 trainer.train()
 ```
 
-Compute frequencies from the **same split that the DataLoader samples uniformly**. NO_DUPLICATES, weighted or grouped samplers invalidate this proposal model. Reusing training frequencies for held-out in-batch loss has the same problem; the example evaluates held-out queries by full-corpus Recall separately.
+Compute frequencies from the **same split that the DataLoader samples uniformly**. NO_DUPLICATES, weighted or grouped samplers invalidate this proposal model. For held-out quality, evaluate retrieval against the full corpus; reusing training frequencies for held-out in-batch loss generally gives the wrong correction.
+
+Both loss classes can also be wrapped in [MatryoshkaLoss](docs/api.md#train-at-multiple-embedding-sizes) to train several embedding sizes together.
 
 ## Components and objectives
 
@@ -100,7 +104,7 @@ See the [API contract](docs/api.md), [design and compatibility](docs/design.md),
 
 ## Validation and limits
 
-Validation covers 53 tests: 37 ordinary/integration cases, 7 statistical checks, one two-worker test, 5 public-document contract checks and 3 experiment-metric regressions. Ordinary and cached CPU examples completed four steps. These synthetic smoke runs are not performance comparisons.
+Automated checks cover the sampling calculations, loss gradients and Sentence Transformers integration. Both ordinary and cached CPU training examples run in [CI](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml). These checks use synthetic data; real-data improvements need separate evaluation.
 
 - Verified environment: macOS arm64, Python 3.12.13, ST 6.3.0, PyTorch 2.15.0, Transformers 5.23.0.
 - CPU, single training process, finite map-style datasets. CUDA/MPS, DDP, cross-device gathering, streaming counts and multiple datasets are unsupported or unverified.
@@ -108,15 +112,14 @@ Validation covers 53 tests: 37 ordinary/integration cases, 7 statistical checks,
 - `mask_same_query=True` is a batch-local known-positive heuristic. Unbiased-estimator checks use False.
 - Mined negative columns are uncorrected heuristic terms, not samples from a known proposal.
 - Exact inclusion calculations can be expensive for large batches; expected counts are the usual starting point.
-- Performance numbers reported for the original prototype are not results for this version.
 
-## Origins and references
+## Research background
 
-Reviewed and reorganized from a user-supplied st-logq prototype. This implementation adapts the following ideas to its own sampling design; it does not claim to reproduce their experiments.
+Cosmea builds on the following research. It adapts the sampling and loss calculations to the batches it creates; it does not claim to reproduce the papers’ experiments.
 
 - [Yi et al., 2019 — Sampling-Bias-Corrected Neural Modeling](https://research.google/pubs/sampling-bias-corrected-neural-modeling-for-large-corpus-item-recommendations/)
 - [Yang et al., 2020 — Mixed Negative Sampling](https://research.google/pubs/mixed-negative-sampling-for-learning-two-tower-neural-networks-in-recommendations/)
 - [Ma & Collins, 2018 — Conditional NCE](https://arxiv.org/abs/1809.01812)
 - [Khrylchenko et al., 2025 — Correcting the LogQ Correction](https://arxiv.org/abs/2507.09331) / [author code at the inspected commit](https://github.com/NonameUntitled/logq/tree/f48221cad05612a2558966288e77020e61f3ff01)
 
-See [NOTICE](NOTICE.md) for licensing/provenance status. No public release has been made. Hosted check results are available in [GitHub Actions](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml).
+See [NOTICE](NOTICE.md) for licensing/provenance status. No package release has been made. Hosted check results are available in [GitHub Actions](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml).

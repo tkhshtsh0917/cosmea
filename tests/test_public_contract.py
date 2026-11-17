@@ -57,3 +57,23 @@ def test_link_outside_checkout_is_rejected(audit):
     errors = audit.inspect_public(audit.public_files())
 
     assert any("outside public root" in error for error in errors)
+
+
+def test_display_math_is_not_a_link_but_surrounding_links_are_checked(audit):
+    formula = "$$\n" + r"\operatorname{sg}[\sigma(z-F)](z-F)" + "\n$$\n"
+    valid = formula + "\n[Japanese](README.ja.md)\n"
+
+    assert audit.inspect_text("README.md", valid.encode(), published=audit.PUBLIC_DOCS) == []
+
+    invalid = valid + "\n[Missing](missing.md)\n" + formula
+    errors = audit.inspect_text("README.md", invalid.encode(), published=audit.PUBLIC_DOCS)
+
+    assert errors == ["README.md: link target is not published missing.md"]
+
+
+def test_display_math_does_not_hide_personal_paths(audit):
+    personal_path = "/".join(["", "Users", "example-user", "notes", "README.md"])
+    text = f"$$\n{personal_path}\n$$\n"
+    errors = audit.inspect_text("README.md", text.encode(), published=audit.PUBLIC_DOCS)
+
+    assert any("machine-specific" in error for error in errors)

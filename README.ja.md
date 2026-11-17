@@ -4,26 +4,29 @@
 
 **Cosmea（コスメア）** は、Sentence Transformersへ **logQ補正とMixed Negative Sampling（MNS）** を追加するPythonライブラリです。学習行を選ぶサンプラーは既定のランダム方式を使い、コレーターが一様コーパス負例を追加し、損失がサンプリング確率を補正します。
 
-名前はコスモスの異名 *Cosmea* と、赤いコスモスの花言葉「調和」に由来します。異なる負例分布を組み合わせ、補正との整合を取る設計を示唆しています。[名称：Kew](https://powo.science.kew.org/taxon/8407-1)／[花言葉：千葉県](https://www.pref.chiba.lg.jp/ryuhan/pbmgm/zukan/kaki/cosmos.html)
+名前はコスモスの異名 *Cosmea* と、花言葉の「調和」に由来します。
 
 > 開発版 `0.1.0.dev0`。2026-11-17時点でCPU上の数式・統合テストを確認。実データでの有効性は未検証です。logQは負例抽出の偏りを補正するもので、人気集中の緩和や因果的公平性を保証する機能ではありません。
 
-## インストールと最小実行
+## インストール
 
-Python 3.12で検証しています。公開パッケージのインストールではなく、このcheckoutを使います。
+お使いのPythonプロジェクトで、[uv](https://docs.astral.sh/uv/)を使ってGitHubからインストールできます。
 
 ```bash
-# checkoutしたcosmeaディレクトリで実行
-mise trust
-mise install
-mise run setup
-mise run smoke
-mise run check
+uv add "cosmea[train] @ git+https://github.com/tkhshtsh0917/cosmea"
 ```
 
-開発ツールはmise、依存とPythonはuvで管理します。正本と個別検査は [開発手順](CONTRIBUTING.ja.md) を参照してください。通常利用には `pip install -e '.[train]'` も使えます。最小例はtiny BERTと合成データをローカル生成し、依存導入後のモデルダウンロードは不要です。
+`[train]`を付けると、`SentenceTransformerTrainer`で学習するための依存ライブラリも入ります。コレーターや損失関数だけを使う場合は、`[train]`を外してインストールできます。検証にはPython 3.12を使っています。対応する依存ライブラリの範囲は[APIガイド](docs/ja/api.md)を参照してください。
+
+uvは取得したGitコミットをお使いのプロジェクトの`uv.lock`へ記録します。特定の版を使いたい場合は、上のコマンドに`--rev`とコミットSHAを追加してください。
+
+開発への参加、オフラインの学習例、ビルドの手順は[CONTRIBUTING.ja.md](CONTRIBUTING.ja.md)にまとめています。
 
 ## 手元のデータで使う
+
+手元のデータを読み込んで学習する完全なスクリプトは、[CSV学習例](examples/README.ja.md)を参照してください。
+
+`train_dataset`には`query, positive, query_id, item_id`の順に列を持つ学習データを用意します。`corpus_texts`は検索対象のテキスト一覧、`corpus_ids`は同じ順番のID一覧です。IDの付け方と追加の負例列は[APIガイド](docs/ja/api.md)で説明しています。
 
 ```python
 from sentence_transformers import (
@@ -47,7 +50,7 @@ collator = MixedNegativeDataCollator(
     item_frequency=frequency,
     corpus=corpus_texts,
     corpus_ids=corpus_ids,
-    num_uniform=64,                  # distinct corpus IDsの数を超える指定は不可
+    num_uniform=64,  # コーパス内の異なるIDの数を超えないようにする。
     query_id_column="query_id",
     item_id_column="item_id",
 )
@@ -77,7 +80,9 @@ trainer = SentenceTransformerTrainer(
 trainer.train()
 ```
 
-頻度は **そのDataLoaderがランダム抽出する学習split** から作ります。`NO_DUPLICATES`、重み付き・グループ化サンプラーを使うと、この頻度から計算したQは合いません。評価splitに同じコレーターを使い回して得る損失にも同じ問題があるため、最小例は評価データの全コーパスRecallを別に計算します。
+頻度は **そのDataLoaderがランダム抽出する学習split** から作ります。`NO_DUPLICATES`、重み付き・グループ化サンプラーを使うと、この頻度から計算したQは合いません。未知のデータでの品質は、全コーパスを検索して評価してください。評価用バッチの損失へ学習頻度を使い回すと、一般に補正が合わなくなります。
+
+通常版・Cached版のどちらも、[MatryoshkaLoss](docs/ja/api.md#複数の埋め込み次元で学習する)で包み、複数の埋め込み次元をまとめて学習できます。
 
 ## 提供する部品
 
@@ -101,7 +106,7 @@ trainer.train()
 
 ## 検証と範囲
 
-53件のテストで、37件の通常・統合検証、7件の統計検証、1件の2ワーカー検証、5件の公開文書契約、3件の実験指標の回帰検証を確認しています。通常版とCached版のCPU学習例も4ステップ実行しました。小さな合成データの動作確認であり、性能比較ではありません。
+抽出確率の計算、損失の勾配、Sentence Transformersとの接続を自動検査しています。通常版・Cached版のCPU学習例も[CI](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml)で確認しています。これらは合成データによる検証で、実データでの改善は別途評価する必要があります。
 
 - 検証環境：macOS arm64、Python 3.12.13、ST 6.3.0、PyTorch 2.15.0、Transformers 5.23.0。
 - CPU、単一プロセス学習、有限のmap-style datasetが対象です。CUDA／MPS／DDP／cross-device gather／ストリーミング頻度／複数データセットは未対応または未検証です。
@@ -109,11 +114,10 @@ trainer.train()
 - `mask_same_query=True`（既定）はバッチ内で見える既知正例だけを除くヒューリスティックです。不偏性を主張する検証ではFalseを使います。
 - マイニング済み負例の列は無補正の追加項です。既知の提案分布からの標本として扱いません。
 - 包含確率は正確に計算しますが大きなバッチでは高価です。通常は `expected_count` を使います。
-- 元のプロトタイプで報告された性能数値は、本版の結果として転載していません。
 
-## 着想元と出典
+## 関連研究
 
-ユーザー提供のst-logqプロトタイプを出発点としてレビュー・再編しました。論文の再現結果ではなく、実際の標本設計に合わせた適応実装です。
+Cosmeaは次の研究を参考にしています。自分で作るバッチの抽出方法に合わせて計算を調整しており、論文の実験を再現したという主張ではありません。
 
 - [Yi et al., 2019 — Sampling-Bias-Corrected Neural Modeling](https://research.google/pubs/sampling-bias-corrected-neural-modeling-for-large-corpus-item-recommendations/)
 - [Yang et al., 2020 — Mixed Negative Sampling](https://research.google/pubs/mixed-negative-sampling-for-learning-two-tower-neural-networks-in-recommendations/)
