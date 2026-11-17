@@ -5,8 +5,8 @@ these b query rows to the full batch. Corrections follow temperature scaling.
 
 The partition estimators assume uniform sampling of B training rows without
 replacement and K distinct corpus items without replacement, independently.
-Only the pooled, positive-masked estimator with full proposal support and
-no query-dependent filtering is an unbiased estimate of the negative partition.
+With positive-item masking and no query-dependent filtering, each estimator
+is unbiased over its proposal support (the pooled union or an individual source).
 This does NOT make its log, normalized probabilities, or gradient unbiased.
 
 Yi-style ranking NCE uses the empirical marginal proposal (an iid approximation
@@ -147,8 +147,14 @@ def known_positive_mask(
         same_query = own[:, :b]
 
     if mask_same_item:
-        equal = cand_id[:b, None] == cand_id[None, :]
-        return ((same_query.float() @ equal.float()) > 0) | own
+        # Keep memory proportional to the chunk, not the full B-by-C batch.
+        mask = cand_id[rows, None] == cand_id[None, :]
+        if mask_same_query:
+            repeated = (same_query.sum(dim=1) > 1).nonzero(as_tuple=True)[0]
+            for local_row in repeated.tolist():
+                positive_ids = cand_id[:b][same_query[local_row]]
+                mask[local_row] |= torch.isin(cand_id, positive_ids)
+        return mask | own
 
     mask = torch.zeros_like(own)
     mask[:, :b] = same_query
@@ -156,7 +162,7 @@ def known_positive_mask(
 
 
 def _loss_from_parts(pos: Tensor, log_z_neg: Tensor, pos_log_q: Tensor, variant: Variant) -> Tensor:
-    has_negatives = torch.isfinite(log_z_neg)
+    has_negatives = log_z_neg != -torch.inf
     safe_log_z = torch.where(has_negatives, log_z_neg, torch.zeros_like(log_z_neg))
 
     if variant == "plugin":
@@ -192,9 +198,13 @@ def negative_log_partition(
 
     Duplicates are removed *after* row-specific masking in inclusion mode.
     iid_proposal is reserved for the approximate Yi-style objective.
+    Nonfinite scores raise ValueError, including entries excluded by masking.
     """
     if rows is None:
         rows = torch.arange(scores.size(0), device=scores.device)
+
+    if not torch.isfinite(scores).all():
+        raise ValueError("scores must be finite; NaN/Inf indicates invalid embeddings or numerical overflow.")
 
     # AMP-safe loss arithmetic, while retaining float64 oracle inputs.
     scores = scores.float() if scores.dtype in (torch.float16, torch.bfloat16) else scores
@@ -250,7 +260,7 @@ def mixed_negative_logq_loss(
     plugin: positive uncorrected, negatives corrected by expected counts/inclusion.
     improved: stop-gradient confidence-weighted adaptation, same first derivative
         as plugin, different scalar values and higher-order derivatives.
-    separate: average only sources with at least one valid negative for each row.
+    separate: average active in-batch, uniform and uncorrected extra objectives.
     pooled: one softmax; expected counts combine via multiple importance sampling.
     No configuration is a general causal popularity/selection debiasing method.
     """
@@ -277,6 +287,7 @@ def mixed_negative_logq_loss(
     if variant == "yi" and q_measure == "inclusion":
         raise ValueError("yi + inclusion has no supported ranking-NCE interpretation; use expected_count or plugin.")
     pos = scores[torch.arange(rows.numel(), device=scores.device), rows]
+    k = int((label["cand_source"] == SOURCE_UNIFORM).sum())
 
     def partition(sources: tuple[int, ...] | None) -> Tensor:
         return negative_log_partition(
@@ -292,7 +303,8 @@ def mixed_negative_logq_loss(
         )
 
     def positive_log_q(per_source: bool) -> Tensor:
-        if variant != "yi" or logq_strength == 0:
+        if variant != "yi" or logq_strength == 0 or (b == 1 and k == 0):
+            # With no sampled negatives, pooled extras form an ordinary softmax.
             return torch.zeros_like(pos)
         return logq_strength * candidate_log_q(label, q_measure, per_source, iid_proposal=True)[rows].to(scores.dtype)
 
@@ -303,15 +315,19 @@ def mixed_negative_logq_loss(
             raise ValueError("Positive has zero proposal support.")
         return _loss_from_parts(pos, log_z, pos_q, variant)
 
-    groups: list[tuple[int, ...]] = [(SOURCE_IN_BATCH, SOURCE_OTHER)]
-    k = int((label["cand_source"] == SOURCE_UNIFORM).sum())
+    groups: list[tuple[int, ...]] = [(SOURCE_IN_BATCH,)]
     if k:
         groups.append((SOURCE_UNIFORM,))
+    if (label["cand_source"] == SOURCE_OTHER).any():
+        groups.append((SOURCE_OTHER,))
 
     losses, active = [], []
     for group in groups:
         log_z = partition(group)
-        if group == (SOURCE_UNIFORM,) and variant == "yi" and logq_strength:
+        if group == (SOURCE_OTHER,):
+            # Unknown mining proposals cannot define a positive logQ correction.
+            pos_q = torch.zeros_like(pos)
+        elif group == (SOURCE_UNIFORM,) and variant == "yi" and logq_strength:
             if not label["cand_in_corpus"][rows].all():
                 raise ValueError("yi + separate requires every positive ID in the uniform corpus.")
             pos_q = pos.new_full(pos.shape, logq_strength * math.log(k / int(label["corpus_size"])))
@@ -320,6 +336,6 @@ def mixed_negative_logq_loss(
         if variant == "yi" and (~torch.isfinite(pos_q) & torch.isfinite(log_z)).any():
             raise ValueError("Positive has zero proposal support.")
         losses.append(_loss_from_parts(pos, log_z, pos_q, variant))
-        active.append(torch.isfinite(log_z))
+        active.append(log_z != -torch.inf)
 
     return torch.stack(losses).sum(0) / torch.stack(active).sum(0).clamp_min(1)

@@ -38,9 +38,14 @@ def main() -> None:
     parser.add_argument("--uniform", type=int, default=16, help="Distinct corpus negatives per batch")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--query-prompt", help="Prefix required by the chosen model for queries")
+    parser.add_argument("--document-prompt", help="Prefix required by the chosen model for documents")
+    parser.add_argument("--max-length", type=int, help="Token limit passed to the collator")
     args = parser.parse_args()
     if args.batch_size < 1 or args.epochs < 1:
         parser.error("--batch-size and --epochs must be positive")
+    if args.max_length is not None and args.max_length < 1:
+        parser.error("--max-length must be positive")
 
     # 1. Load matching query/item pairs and the collection we want to search.
     dataset = Dataset.from_list(read_rows(args.train, ["query", "positive", "query_id", "item_id"]))
@@ -49,6 +54,11 @@ def main() -> None:
 
     # 2. Count positives and add uniform negatives to each batch.
     frequency = ItemFrequency.from_dataset(dataset, item_id_column="item_id")
+    prompts = {
+        column: prompt
+        for column, prompt in (("query", args.query_prompt), ("positive", args.document_prompt))
+        if prompt is not None
+    }
     collator = MixedNegativeDataCollator(
         preprocess_fn=model.preprocess,
         item_frequency=frequency,
@@ -57,6 +67,8 @@ def main() -> None:
         num_uniform=args.uniform,
         query_id_column="query_id",
         item_id_column="item_id",
+        prompts=prompts,
+        max_length=args.max_length,
     )
 
     # 3. Train with logQ correction, then save the model for retrieval.

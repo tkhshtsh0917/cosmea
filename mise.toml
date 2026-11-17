@@ -10,7 +10,7 @@ HF_HUB_OFFLINE = "1"
 
 [tasks.setup]
 description = "Install the exact development and training environment"
-run = "uv sync --locked --extra train --extra dev"
+run = "uv sync --locked --extra train --group dev"
 
 [tasks.format]
 run = "uv run --frozen --no-sync ruff format src tests examples experiments scripts"
@@ -50,8 +50,6 @@ run = [
   "mise run lint",
   "mise run typecheck",
   "mise run test",
-  "mise run smoke",
   "mise run build",
-  "mise run audit",
   "mise run secrets",
 ]

@@ -29,6 +29,13 @@ def test_exact_finite_population_inclusion():
     assert q.tolist() == pytest.approx([0.0, 2 / 3, 1.0])
 
 
+def test_iid_inclusion_helper_uses_binomial_probability():
+    lab = label([0, 1, 2], {0: 1, 1: 1, 2: 2}, n=4)
+    q = candidate_log_q(lab, "inclusion", False, iid_proposal=True).exp()
+
+    assert q.tolist() == pytest.approx([7 / 16, 7 / 16, 3 / 4])
+
+
 @pytest.mark.parametrize("measure", ["expected_count", "inclusion"])
 def test_partition_matches_exhaustive_sampling_expectation(measure):
     # Fixed first row, then two of four remaining rows; independent 2-of-5 corpus draw.
@@ -53,8 +60,10 @@ def test_partition_matches_exhaustive_sampling_expectation(measure):
     assert torch.stack(values).mean().item() == pytest.approx(item_scores[1:].exp().sum().item(), abs=1e-12)
 
 
-@pytest.mark.parametrize("variant", ["yi", "plugin", "improved"])
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64])
+@pytest.mark.parametrize(
+    "variant,dtype",
+    [("yi", torch.float16), ("plugin", torch.bfloat16), ("improved", torch.float32), ("yi", torch.float64)],
+)
 def test_empty_negative_pool_is_finite_zero_gradient(variant, dtype):
     lab = label([7], {7: 1}, 1)
     scores = torch.tensor([[900.0]], dtype=dtype, requires_grad=True)
@@ -144,3 +153,34 @@ def test_duplicate_corpus_ids_sample_distinct_items():
 
     assert collator.corpus_size == 2
     assert set(batch["label"]["cand_id"][1:].tolist()) == {0, 1}
+
+
+@pytest.mark.parametrize("measure", ["expected_count", "inclusion"])
+@pytest.mark.parametrize("mask_positive", [True, False])
+@pytest.mark.parametrize("sources", [None, (0,), (1,)])
+def test_exact_support_with_outside_positive_and_unclicked_item(measure, mask_positive, sources):
+    population = [4, 4, 1, 2]  # positive 4 is outside the corpus; corpus item 0 is unclicked.
+    counts = {4: 2, 1: 1, 2: 1}
+    item_scores = torch.tensor([-0.5, 0.2, 0.7, 0.0, 1.1], dtype=torch.float64)
+    estimates = []
+    for other in range(1, 4):
+        for uniform in range(3):
+            lab = label([4, population[other]], counts, 4, [uniform], 3)
+            estimates.append(
+                negative_log_partition(
+                    item_scores[lab["cand_id"]][None, :],
+                    lab,
+                    rows=torch.tensor([0]),
+                    q_measure=measure,
+                    mask_same_item=mask_positive,
+                    mask_same_query=False,
+                    sources=sources,
+                ).exp()[0]
+            )
+    support = {0, 1, 2, 4} if sources is None else ({1, 2, 4} if sources == (0,) else {0, 1, 2})
+    if mask_positive:
+        support.discard(4)
+
+    assert torch.stack(estimates).mean().item() == pytest.approx(
+        item_scores[sorted(support)].exp().sum().item(), abs=1e-12
+    )

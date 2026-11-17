@@ -4,27 +4,22 @@
 
 ## プロジェクト設定
 
-| 項目 | 採用構成・正本 |
+| 項目 | 正本 |
 | --- | --- |
-| 目的・成果物 | 検索モデルの学習用Pythonライブラリ `cosmea` |
-| 対象環境 | CPU・単一学習プロセス・有限map-style dataset。macOS arm64でローカル検証。Ubuntu 24.04では[GitHub Actions](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml)で同じ検査を実行 |
-| 言語・版 | 開発用Pythonの固定版は `.python-version`、対応下限は `pyproject.toml` |
-| ツール・依存管理 | miseが `mise.toml` のuv・Betterleaksを管理。uvがPythonと仮想環境を管理 |
-| 依存の正本 | 互換範囲とextrasは `pyproject.toml`、開発環境の解決結果はGit管理する `uv.lock` |
-| 整形・静的検査 | Ruff format・lint、全package moduleのmypy。設定は `pyproject.toml` |
-| 検証コマンド | `mise run check`：整形、lint、型、テスト、オフライン学習例、ビルド、公開ファイル検査、Betterleaks |
-| 互換性 | 公開クラス名とmetadata順序を維持。Qの尺度・mask・既定値の変更時は契約も更新 |
-| 資源制約 | `0 <= K <= M`、`1 <= B <= N`、正のCachedチャンクサイズ。計算量・メモリの範囲は [設計](docs/ja/design.md) |
-| 公開文書 | README・API・設計・貢献手順を日英で管理 |
-| 配布・公開 | Apache-2.0。[LICENSE](LICENSE)と[NOTICE](NOTICE.md)をwheel／sdistへ収録。レジストリ・配信・パッケージ公開リリースは未設定 |
-| 完了条件 | 品質検査成功、公開文書だけで利用可能、成果物に非公開記録を含めない。実データ性能は保証しない |
-| Git操作 | 依頼範囲のローカル編集・検証。commit・履歴整理・push・tag・公開は個別に管理者の明示許可が必要。検査成功から許可を推定しない |
+| ライブラリ | `src/cosmea`。CPU・単一学習プロセス・有限dataset |
+| Python | 開発版は`.python-version`、対応下限は`pyproject.toml` |
+| ツール | `mise.toml`でuvとBetterleaksを固定 |
+| 依存関係 | 実行時の範囲と`train` extraは`pyproject.toml`、開発ツールは`dev` dependency group |
+| 再現性 | 主な開発・CI環境を`uv.lock`で固定 |
+| 品質検査 | Ruff整形/lint、mypy、pytest、ビルド、公開内容・ライセンス監査、Betterleaks |
+| 文書 | README・API・設計・examples・このガイドを日英で用意 |
+| ライセンス | Apache-2.0。LICENSEとNOTICEをwheel／sdistへ収録 |
 
-package versionの正本は `project.version`。公開 `__version__` も一致させる。実行時依存はSentence Transformers、PyTorch、NumPy。`train` extraはTrainer連携用のdatasets／Accelerate、`dev`は開発ツールを提供する。STはApache-2.0。PyTorch・NumPyの配布物は複数のライセンスを含み、導入版のmetadataと同梱LICENSEで確認する。これらはCosmea自体のライセンスとは別。STの固定minorを更新するときはコレーター、Trainerのmetadata転送、GradCacheを再確認する。
+package versionの正本は`project.version`で、公開`__version__`も一致させる。metadataの順序・抽出方法・マスク・既定値を変える場合は、API文書と振る舞いのテストを更新する。標本設計・資源の制限は[設計](docs/ja/design.md)を参照。
 
-## セットアップと検証
+## セットアップと検査
 
-[mise](https://mise.jdx.dev/getting-started.html) を導入し、checkoutの設定を確認してから実行する。
+[mise](https://mise.jdx.dev/getting-started.html)を導入し、checkoutの設定を確認してから実行する。
 
 ```bash
 git clone https://github.com/tkhshtsh0917/cosmea.git
@@ -36,47 +31,54 @@ mise run setup
 mise run check
 ```
 
-依存導入は `setup` に分離する。検査は `uv run --frozen --no-sync` と非隔離ビルドを使い、ツールや依存を暗黙に変更しない。新しい環境では先にsetupを実行する。意図した更新では正本を変更し、`mise exec -- uv lock` の差分確認後にsetupとcheckを実行する。`mise run format` は整形適用、`format-check` は検査だけを行う。
+`setup`は固定した学習依存と`dev` groupを導入する。`check`は`uv run --frozen --no-sync`と非隔離ビルドを使い、依存を解決・更新しない。意図的な依存変更では`pyproject.toml`を編集し、`mise exec -- uv lock`の差分を確認してsetup・checkを実行する。整形の適用は`mise run format`。
 
-テストはローカルの合成入力を使う。統計テストは小規模な全列挙・モンテカルロであり、性能ベンチマークではない。workerテストはOSの共有メモリを必要とする。制限環境では分けて実行し、未実行分があれば明記する。
+主なCI jobは同じ固定版のsetup/checkを実行する。互換性jobではPython 3.11とTorch 2.6／NumPy 2.0、Python 3.13と宣言範囲内の依存を明示的に解決し、導入版を記録してテストする。これらは固定した基準環境の代わりではない。Actionsはcommit SHAで固定し、更新時はSHAと版のコメントを一緒に変える。
+
+## テストと利用例
+
+`tests/`直下は本体のテストで、小さな全列挙oracleとTrainer統合を含む。`tests/tooling/`は開発用監査、`tests/experiments/`は合成実験の指標を検証する。すべて`mise run check`の対象とする。
+
+実際のDataLoader workerテストはプロセス初期化を通すため、OSの共有メモリが必要。制限環境では次の2群に分け、未実行の群があれば明記する。
 
 ```bash
 mise exec -- uv run --frozen --no-sync pytest -m 'not workers' -q
 mise exec -- uv run --frozen --no-sync pytest -m workers -q
 ```
 
-CIも同じsetup/checkをread-only権限で実行する。workflowの作成を、ホスト上のCI成功とはみなさない。公開ジョブは含めない。
-
-## 変更とレビュー
-
-`src/cosmea`、`tests`、`examples`、`experiments`、`scripts`の責務を分ける。検証・主要処理・状態更新などの間に意味のある空行を入れ、テスト・ツールにも同じ可読性規約を適用する。docstringにはshape、失敗条件、数値上の工夫、副作用を記述する。着想元・開発経緯は人間向け文書へ置く。
-
-不具合修正には振る舞いに基づく回帰検証と、関連境界・呼出し経路の確認を加える。可能なら独立した数式oracleと比較する。stationarity検証を証明と呼ばず、合成学習を有効性の証拠にしない。コード・依存・図・文書・配布物を横断してレビューする。性能を主張するときは比較する両版、入力、環境、ウォームアップ、反復、集計、別入力での悪化も記録する。
-
-日英文書を同時に更新し、公開ファイルへ個人パス・非公開参照・秘密情報を含めない。`scripts/check_public.py` はリンク・明らかなローカルパス・配布物を検査するが、一般的な秘密検出器ではない。必要な第三者表示を保持する。非公開記録をGit・配布物から除外し、歴史的snapshotを変更しない。
-
-## ビルドと今後の公開
-
-`mise run build`はdistにwheelとsdistを1つずつ作り、`mise run audit`が両方を検査する。Apache-2.0のmetadataと、LICENSE／NOTICEの内容が元ファイルと一致することも確認する。SPDX識別子と収録するライセンスファイルは`pyproject.toml`で指定する。PEP 639のmetadataに対応するため、ビルドにはsetuptools 77.0.3以上を使い、開発環境の版は`uv.lock`で固定する。
-
-版を変える場合は古いビルド成果物を整理する。第三者は非公開入力なしでsdistからビルドできる。将来の公開には、管理者による公開先の決定、Git／公開操作の許可、ホストCIの成功、公開履歴・作成者情報の確認、ライセンス・表示の収録確認、成果物checksumの記録が必要。公開は今回の開発作業の範囲外。
-
-## 秘密情報の検査とコード例の改行
-
-`mise run secrets`はビルド後に[Betterleaks](https://github.com/betterleaks/betterleaks/tree/v1.10.1)（MIT）を実行する。版は`mise.toml`で固定し、公開予定ファイル、展開したwheel／sdist、commitがあればローカルの全refのGit履歴を検査する。CIは全履歴をcheckoutし、ローカルのshallow cloneは不足履歴を取得する。初回commit前やsource archiveでは履歴がないことを明示する。固定版の組込み規則を使い、providerへの認証情報検証は無効にする。検出・実行エラーはいずれも検査失敗となる。マスク済みJSONレポートはGit除外された`build/security/`に保存し、包括的なallowlistやbaselineは使わない。パターン検出であり、秘密情報が一切ないことの保証ではない。
-
-複数行の関数呼出しは1行1引数と末尾カンマを基本にする。公開コード例にも同じ規約を適用し、短く単純な呼出しは読みやすければ1行に収める。長いimportも項目ごとに改行する。
-
 ## オフライン学習例と任意の実験
 
-`mise run setup`の後、`mise run smoke`で通常版・Cached版の学習例を実行できます。小さなBERTと合成データをローカルで作るため、学習済みモデルのダウンロードは不要です。`mise run check`にもこの検証を含めています。
+`mise run smoke`は、小さなローカルBERTと合成データで通常版・Cached版の例を実行する。モデルのダウンロードは不要。標準のcheckでは採掘負例・最後の1行バッチを含むTrainer学習を検証するため、smokeは任意実行とする。
 
-時間をかけて合成データ上の設定を比較する場合は、次を実行します。
+長めの合成データによる品質比較は次のコマンドで実行する。
 
 ```bash
 mise exec -- uv run --frozen --no-sync python experiments/toy_two_tower.py --seeds 3 --out results.json
 ```
 
-これは通常の検査とは別の任意実験です。出力には引数とseedごとの結果を保存します。比較に使う場合はソースの版と環境も一緒に記録してください。この改訂では既定設定の実験全体を再実行していません。指標の定義は[設計の説明](docs/ja/design.md)を参照してください。
+回帰テストとは別に統計的性質を観察する場合は次を使う。
 
-コードの置き場は、ライブラリ本体が`src/cosmea`、利用例が`examples`、検証が`tests`、任意実験が`experiments`、開発用の検査が`scripts`です。
+```bash
+mise exec -- uv run --frozen --no-sync python experiments/diagnostics/estimators.py --trials 2000
+mise exec -- uv run --frozen --no-sync python experiments/diagnostics/stationarity.py --max-negatives 2
+```
+
+これらは特定の分布での観察であり、一般的な分散の優劣や一致性の証明ではない。全列挙の計算量は指数的に増える。結果には引数・seed・ソース版・環境を添える。この改訂では既定の品質実験全体を再実行していない。指標と前提は[設計](docs/ja/design.md)を参照。
+
+## レビューと読みやすいコード
+
+`src/cosmea`・`examples`・`tests`・`experiments`・`scripts`の責務を分ける。入力検証・計算・状態更新の間に意味のある空行を入れる。複数行の呼出しは1行1引数と末尾カンマを使い、短い単純な呼出しは1行でよい。docstringにはshape・失敗条件・重要な制約を説明する。
+
+修正には、修正前に失敗するテストを用意し、可能なら独立した数式のoracleを使う。必要な境界を検証し、同じ性質をすべての設定の組合せで繰り返さない。合成データの接続検査は実データの品質を保証しない。性能の主張には入力・版・測定方法を記録する。
+
+日英文書を同時に更新する。公開資料はローカルノートなしで完結させ、個人パス・非公開リンクを含めない。エージェント固有の操作規則は[AGENTS.md](AGENTS.md)に置く。
+
+## ビルド・ライセンス・秘密情報の検査
+
+`mise run build`はdistにwheelとsdistを1つずつ作る。`secrets` taskは公開内容・ライセンスを監査してからBetterleaksを実行し、checkから一度だけ呼び出す。監査だけを行う場合は`mise run audit`を使える。
+
+監査はライセンスmetadata、LICENSE／NOTICEのbyte一致、型情報のmarker、sdistの収録物が公開ソース一覧または指定したビルド生成metadataに含まれることを確認する。秘密情報の検出とは別の検査である。PEP 639のためsetuptools 77.0.3以上を使い、開発版はlockする。package versionを変えたら古い成果物を整理する。
+
+Betterleaksは固定版の組込み規則で、公開ファイル・展開した成果物・ローカルの全Git refを検査する。providerへの認証情報検証は無効。検出・実行エラーはいずれも失敗とし、マスク済みレポートはGit除外された`build/security/`へ置く。shallow cloneでは履歴検査が失敗するため、利用者が不足履歴を取得してから再実行する。パターン検出は秘密情報が一切ないことを保証しない。
+
+依存先にはそれぞれのライセンスが適用される。STはApache-2.0で、PyTorch・NumPyの配布物は複数のライセンスを含む。素材を取り込む際は必要な第三者表示を保持する。パッケージ公開前にはホストCI・成果物・ライセンスを確認し、checksumを記録して管理者のリリース手順に従う。パッケージ公開jobは設定していない。

@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PERSONAL_PATH = re.compile(r"/(?:Users|home)/[A-Za-z0-9_.-]+/|/private/(?:tmp|var)/")
-PRIVATE_LINK = re.compile(r"\]\([^\n)]*(?:\.private/|research/|file://)")
+PRIVATE_LINK = re.compile(r"\]\([^\n)]*(?:\.private/|file://)")
 TEXT_SUFFIXES = {".md", ".py", ".toml", ".yml", ".yaml", ".txt", ".json", ".in", ".lock"}
 EXCLUDED = {".git", ".private", ".venv", ".mypy_cache", ".ruff_cache", ".pytest_cache", "__pycache__", "build", "dist"}
 PUBLIC_DOCS = {
@@ -45,7 +45,9 @@ def public_files() -> list[Path]:
             check=True,
             capture_output=True,
         )
-        return sorted({ROOT / name.decode() for name in result.stdout.split(b"\0") if name})
+        return sorted(
+            {ROOT / name.decode() for name in result.stdout.split(b"\0") if name and (ROOT / name.decode()).is_file()}
+        )
 
     return sorted(
         p
@@ -89,7 +91,7 @@ def inspect_public(files: list[Path]) -> list[str]:
     errors = [f"missing public document: {name}" for name in sorted(PUBLIC_DOCS - published)]
     for path in files:
         name = path.relative_to(ROOT).as_posix()
-        if set(path.relative_to(ROOT).parts) & {".private", "research"}:
+        if ".private" in path.relative_to(ROOT).parts:
             errors.append(f"{name}: private material is eligible for publication")
         if path.suffix in TEXT_SUFFIXES or name == "LICENSE":
             errors.extend(inspect_text(name, path.read_bytes(), published=published))
@@ -130,8 +132,9 @@ def inspect_artifacts() -> list[str]:
 
     with zipfile.ZipFile(wheels[0]) as archive:
         entries = {name: archive.read(name) for name in archive.namelist() if not name.endswith("/")}
-        if "cosmea/functional.py" not in entries:
-            errors.append("wheel: missing runtime package")
+        for name in ("cosmea/functional.py", "cosmea/py.typed"):
+            if name not in entries:
+                errors.append(f"wheel: missing runtime payload {name}")
         metadata_paths = [name for name in entries if name.endswith(".dist-info/METADATA")]
         if len(metadata_paths) != 1:
             errors.append("wheel: expected exactly one package METADATA")
@@ -169,9 +172,14 @@ def inspect_artifacts() -> list[str]:
         }
         for name in sorted(required - entries.keys()):
             errors.append(f"sdist: missing {name}")
+        published = {path.relative_to(ROOT).as_posix() for path in public_files()}
+        generated = {"PKG-INFO", "setup.cfg"} | {
+            f"src/cosmea.egg-info/{name}"
+            for name in ("PKG-INFO", "SOURCES.txt", "dependency_links.txt", "requires.txt", "top_level.txt")
+        }
         for name, data in entries.items():
-            if set(Path(name).parts) & {".private", "research", ".venv"}:
-                errors.append(f"sdist: private/development environment payload {name}")
+            if name not in published | generated:
+                errors.append(f"sdist: payload is outside the public source inventory {name}")
             errors.extend(inspect_text(name, data, published=set(entries)))
     return errors
 

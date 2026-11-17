@@ -31,11 +31,21 @@ Mixing these rules gives the wrong weight. For example, keeping only one b and s
 | `plugin` | Keeps the positive score uncorrected and estimates the total negative contribution | A useful way to match the correction to the actual draw procedure |
 | `improved` | Multiplies a score difference by a confidence weight whose gradient is stopped | Has the same first gradient as plugin with identical settings; loss values and higher derivatives differ |
 
-The actual collator draws without replacement. Thus, a consistency result proved for independent draws does not automatically apply to the default yi implementation. yi does not support `inclusion`. With a separate uniform yi loss, every positive must be present in the corpus.
+The row sampler draws training rows without replacement; the collator independently draws distinct corpus items. Thus, a consistency result proved for independent draws does not automatically apply to the default yi implementation. yi does not support `inclusion`. With a separate uniform yi loss, every positive must be present in the corpus.
 
 Under suitable sampling assumptions, the average estimate of the total negative contribution is correct. This property is called **unbiasedness**. Taking a logarithm or a ratio can introduce bias again, so it does not imply unbiased loss gradients. Query-based filtering and manually supplied negatives also change the assumptions.
 
 Under ideal independent sampling and a sufficiently expressive model, logQ correction targets the item distribution in the observed positive log; uncorrected learning targets a probability ratio. Neither statement establishes lower popularity concentration in a real application.
+
+## Mined negatives and loss monitoring
+
+In `separate` mode, in-batch, uniform and extra mined candidates form independent objectives. Extra candidates are shared across queries, receive no correction, and use an uncorrected positive. Only objectives with eligible negatives enter the average. A singleton batch with mined negatives therefore remains trainable. This changes the initial development behavior, which grouped mined candidates with in-batch candidates.
+
+In `pooled` mode, mined terms keep weight 1 while sampled terms receive $1/q$ weighting. With rare items or a larger training population, mined terms can have much less relative influence. Choose separate mode when you want an independent mined-negative objective; its real-data quality still needs evaluation. If there are no in-batch or uniform draws at all, pooled mined candidates use an uncorrected positive as well. A sampled yi objective with zero positive support remains an error.
+
+`improved` is a research option, not an extra source of first-order gradient improvement over plugin. Its scalar value is non-monotonic in the margin and can be negative. Do not use its `eval_loss` for early stopping or best-checkpoint selection. Use held-out retrieval metrics, or train with plugin when a comparable loss value is needed. `scale=20` is a starting value, not a calibrated choice for the catalogue-sized partition estimate; tune it against retrieval metrics.
+
+`inclusion` remains available for comparisons that require deduplication. It has higher compute cost and no established quality or variance advantage over expected counts in general. Start with `expected_count`.
 
 ## Compare configurations fairly
 
@@ -47,13 +57,13 @@ The optional synthetic experiment is described in [CONTRIBUTING.md](../CONTRIBUT
 
 ## Resource and compatibility limits
 
-The collection and its ID index are held in memory. There is no streaming corpus or automatic memory quota. The batch must contain between 1 and $N$ rows; the uniform sample count must be between 0 and $M$. Invalid IDs, counts and options raise errors. Empty negative sets give zero loss and gradient. Separate mode averages only sources with usable negatives.
+The collection and its ID index are held in memory. There is no streaming corpus or automatic memory quota. The batch must contain between 1 and $N$ rows; the uniform sample count must be between 0 and $M$. Invalid IDs, counts and options raise errors. NaN/Inf scores also raise an error, even in masked columns, so invalid model outputs cannot look like a zero loss. Empty negative sets give zero loss and gradient. Separate mode averages only sources with usable negatives.
 
-With $B$ query rows and $C$ candidates, ordinary score memory is $O(BC)$. Cached mode computes $b$ query rows at a time, so score memory is $O(bC)$; candidate embeddings still stay cached. The ID index uses $O(M)$ memory in addition to text. Exact inclusion takes $O((B-1)bC)$ arithmetic per chunk, so expected counts are the initial choice for large batches.
+With $B$ query rows and $C$ candidates, ordinary score memory is $O(BC)$. Cached mode computes $b$ query rows at a time, so score memory is $O(bC)$; candidate embeddings still stay cached. Masking also uses $O(bC)$ working memory: repeated queries collect their known item IDs without constructing a full $B\times C$ match matrix. This bounds working memory, not the time needed for many repeated queries. The ID index uses $O(M)$ memory in addition to text. Exact inclusion takes $O((B-1)bC)$ arithmetic per chunk, so expected counts are the initial choice for large batches.
 
 Half-precision scores are promoted inside the loss to make the calculation more stable. Mixed-precision model training remains unverified.
 
-Cosmea uses Sentence Transformers 6.3 collator helpers and GradCache. Supported ranges are ST `>=6.3,<6.4` and PyTorch `>=2.15,<2.16`; ST v5 compatibility is not claimed. CPU with one training process is verified. GPU, DDP, cross-device candidate sharing, weighted/grouped samplers, `NO_DUPLICATES`, streaming counts and multiple datasets need additional sampling definitions or validation.
+Cosmea uses Sentence Transformers 6.3 collator helpers and GradCache. Supported ranges are ST `>=6.3,<6.4` and PyTorch `>=2.6,<3`, with NumPy `>=2,<3`; ST v5 compatibility is not claimed. CPU with one training process is verified. GPU, DDP, cross-device candidate sharing, weighted/grouped samplers, `NO_DUPLICATES`, streaming counts and multiple datasets need additional sampling definitions or validation.
 
 ## Formula reference
 

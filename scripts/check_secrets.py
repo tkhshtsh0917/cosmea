@@ -2,7 +2,7 @@
 
 Reports are redacted and stored in the ignored build directory. This performs local
 detection only; it neither validates credentials with providers nor uploads reports.
-Run after the distribution build and public-content audit.
+Run after the distribution build; this also performs the public-content audit.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ def main() -> None:
     errors = inspect_public(files) + inspect_artifacts()
     if errors:
         raise SystemExit("\n".join(errors))
+    print(f"Public content and license checks passed ({len(files)} files; artifacts=True).", flush=True)
     reports = ROOT / "build" / "security"
     reports.mkdir(parents=True, exist_ok=True)
     environment = {key: value for key, value in os.environ.items() if not key.startswith(("BETTERLEAKS_", "GITLEAKS_"))}

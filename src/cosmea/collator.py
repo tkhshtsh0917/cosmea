@@ -52,6 +52,9 @@ class MixedNegativeDataCollator(SentenceTransformerDataCollator):
         uniform_column: name of the appended candidate column.
         extra_item_id_columns: extra text column -> ID column mapping; required for each
             extra column when ``item_id_column`` is set.
+        prompts / router_mapping / max_length: inherited preprocessing settings.
+            Pass them here, not only to TrainingArguments: a custom collator does
+            not inherit the trainer's settings. Uniforms reuse the positive settings.
 
     The first two text columns of the dataset are the anchor and the positive, as for
     ``MultipleNegativesRankingLoss``. Further text columns (e.g. mined hard negatives) are kept as

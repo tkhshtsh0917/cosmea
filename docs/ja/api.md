@@ -23,6 +23,29 @@
 
 正例IDが`ItemFrequency`にない場合はエラーになります。コーパスに同じIDが複数あれば最初のテキストを残してまとめ、その後の重複しないID全体から一様に抽出します。
 
+## 前処理を設定する
+
+`prompts`・`router_mapping`・`max_length`は、`MixedNegativeDataCollator`へ直接渡してください。Sentence TransformersはTrainingArgumentsのこれらの設定を、独自コレーターへコピーしません。Trainer側だけに指定すると、必要な前処理が黙って省略される場合があります。
+
+以下はquery/documentのtaskを持つRouterモデルの設定例です。promptとtask名は使うモデルに合わせます。通常のモデルでは`router_mapping`を省き、`max_length`を整数にしてください。
+
+```python
+collator = MixedNegativeDataCollator(
+    preprocess_fn=model.preprocess,
+    item_frequency=frequency,
+    corpus=corpus_texts,
+    corpus_ids=corpus_ids,
+    num_uniform=64,
+    query_id_column="query_id",
+    item_id_column="item_id",
+    prompts={"query": "query: ", "positive": "passage: "},
+    router_mapping={"query": "query", "positive": "document"},
+    max_length={"query": 64, "document": 256},
+)
+```
+
+一様負例には、正例列と同じprompt・task・長さ制限を適用します。追加の採掘負例列にも文書用の前処理が必要なら、明示的に設定してください。評価・推論時のpromptも学習時に揃えます。Router設定の転送はテストしていますが、Routerモデル全体の学習は未検証です。
+
 ## 自分で用意した負例を追加する
 
 別の検索器で見つけた難しい負例などを、追加のテキスト列として渡せます。これらが選ばれる確率は分からないため、追加列の項にはlogQ補正を掛けません。
@@ -40,9 +63,11 @@ collator = MixedNegativeDataCollator(
 
 これにより、テキストが違っても同じitemだと分かります。必要な対応付けがない場合はエラーになります。
 
+採掘負例を独立した無補正の目的関数として扱うには、`combine="separate"`を使います（yiの既定）。pooledでは、学習母集団が大きくなるにつれて補正済み負例より影響が小さくなる場合があります。[採掘負例と損失の監視](design.md#採掘負例と損失の監視)も参照してください。
+
 ## 主な設定を選ぶ
 
-既定値は比較を始めるための設定です。どのデータでも最も良いという意味ではありません。
+まずはyi/separate、またはplugin/pooledをexpected_countで試してください。これらは比較の出発点であり、常に最良という意味ではありません。`improved`・inclusion・マスクの上書きは比較研究向けです。`improved`の評価損失でモデルを選ばないでください。
 
 | 設定 | 意味 |
 | --- | --- |
@@ -54,7 +79,7 @@ collator = MixedNegativeDataCollator(
 | `q_measure` | `expected_count`は同じitemの重複を残し、平均して何回現れるかを使う。`inclusion`は有効な候補をitemごとに1件にし、少なくとも1回現れる確率を使う。yiではinclusionを使えない |
 | `mini_batch_size` | Cached版で一度に計算するクエリ行数。正の整数を指定する。小さくするとスコア行列のメモリを減らせる。勾配の蓄積だけでは候補数は増えない |
 
-separateでは、使える負例がない出所を平均から外します。たとえば学習行が1件のバッチでも、一様負例の損失を空のバッチ内損失と平均して半分にしてしまうことはありません。
+separateの出所は、バッチ内・一様・追加の採掘負例です。使える負例がない出所を平均から外します。たとえば学習行が1件のバッチでも、一様負例の損失を空のバッチ内損失と平均して半分にしてしまうことはありません。
 
 ## 既知の正例を負例から外す
 
@@ -62,6 +87,8 @@ separateでは、使える負例がない出所を平均から外します。た
 
 - `mask_same_item=None`では、正例itemが偶然ほかの候補にも現れたとき、yiは残し、plugin/improvedは除きます。TrueやFalseで変更できますが、学習の目的関数も変わります。
 - `mask_same_query=True`では、現在のバッチにある同じqueryの正例を利用します。コーパス全体の関連itemがすべて分かるわけではありません。この除外は実用上の工夫で、後述の厳密な不偏性の保証には含まれません。
+
+yiの既定（`mask_same_item=False`）では、同じqueryに属する正例列だけを除きます。同じitemが一様列・採掘列にあっても残ります。既知itemの一致を全候補列へ適用するには`mask_same_item=True`を使いますが、yiの目的関数が変わります。
 
 yiで一様負例をseparateとして使う場合は、すべての正例IDがコーパスにも必要です。満たさなければエラーになります。
 
@@ -71,9 +98,24 @@ yiで一様負例をseparateとして使う場合は、すべての正例IDが�
 
 頻度は実際に抽出する学習splitから数えます。学習に使っていないデータで品質を測る場合は、コーパス全体を検索して指標を計算してください。別の評価splitへ学習頻度を使い回すと、一般に補正する確率がずれます。Trainerの評価テストは、情報が損失まで届くことの確認であり、未知データでの品質評価ではありません。
 
+未知クエリの品質評価には、Trainerへ検索用`evaluator`を渡し、`eval_dataset`は省いてください。`eval_queries`はquery IDからテキストへの辞書、`eval_relevant_docs`は同じquery IDから正解のコーパスID集合への辞書です。IDはコーパスの辞書と揃え、必要ならモデルに合う評価用promptも指定します。
+
+```python
+from sentence_transformers.sentence_transformer.evaluation import InformationRetrievalEvaluator
+
+evaluator = InformationRetrievalEvaluator(
+    queries=eval_queries,
+    corpus=dict(zip(corpus_ids, corpus_texts)),
+    relevant_docs=eval_relevant_docs,
+    name="held_out",
+)
+```
+
+学習dataset・コレーターと一緒に`evaluator=evaluator`を渡します。`eval_dataset`に学習頻度にない正例IDが含まれると、`Positive ID absent from item_frequency`で停止します。既知IDだけでも、一般に学習頻度は評価側の抽出確率に合いません。コレーターは全コーパス評価器ではありません。早期終了や最良checkpointの選択には、`improved`の損失値ではなく、未知クエリの検索指標を使ってください。
+
 DataLoaderの各workerはPyTorchの乱数を元に別々の乱数列を使います。再現には同じ起動条件が必要です。途中checkpointからの完全な乱数復元や、worker数を変えても同じ抽出順になることは保証していません。
 
-対応範囲はSentence Transformers `>=6.3,<6.4`、PyTorch `>=2.15,<2.16`です。CPU・1学習プロセスで検証しています。GPU、分散学習、ストリーミングには追加の検証が必要です。[資源と互換性の制限](design.md#資源と互換性の制限)も参照してください。
+対応範囲はSentence Transformers `>=6.3,<6.4`、PyTorch `>=2.6,<3`、NumPy `>=2,<3`です。CPU・1学習プロセスで検証しています。GPU、分散学習、ストリーミングには追加の検証が必要です。[資源と互換性の制限](design.md#資源と互換性の制限)も参照してください。
 
 ## 複数の埋め込み次元で学習する
 
@@ -97,7 +139,7 @@ loss = MatryoshkaLoss(
 
 抽出情報は埋め込みの長さに依存しないので、どの次元でも同じIDと頻度を使えます。重みを$w_m$とすると、全体の損失は$\sum_m w_m\ell_m$です。重みの既定値は1で、自動的に平均するわけではありません。
 
-CPU検証では32・16・8次元で、通常版・Cached版の結果を、次元別に明示計算した損失と比較しています。異なる重みも使い、yiのexpected-count、plugin/improvedのexpected-countとinclusionを確認しました。pluginではTrainerによる学習・評価も確認しています。これは接続と勾配の検証で、短くした後の検索品質を保証するものではありません。ランダムな次元選択（`n_dims_per_step`）、GPU、Matryoshka2dLossはここでは未検証です。
+CPU検証では32・16・8次元で、通常版・Cached版の結果を、次元別に明示計算した損失と比較しています。wrapperの比較はplugin/expected-countで異なる重みを使い、損失間の恒等式はスコア水準で別に確認します。Trainerでは追加負例と最後の1行バッチを含め、通常yiとMatryoshkaで包んだCached yiの学習・評価も確認します。これは接続と勾配の検証で、短くした後の検索品質を保証するものではありません。ランダムな次元選択（`n_dims_per_step`）、GPU、Matryoshka2dLossはここでは未検証です。
 
 ## 詳細：損失へ渡す情報
 
@@ -117,3 +159,5 @@ CPU検証では32・16・8次元で、通常版・Cached版の結果を、次元
 これらは`batch["label"]`で損失へ渡し、モデルの入力特徴には混ぜません。損失クラスは平均した1つの値を返します。`mixed_negative_logq_loss`はクエリ行ごとの値をshape $(b,)$で返します。分割計算時の`rows`は、元のバッチの行番号であり、その行の正例の候補列番号でもあります。
 
 `candidate_log_q(..., rows=...)`はshape $(b,C)$で、正例の行が既に選ばれていることを考慮します。`rows`を省くと$(C,)$になり、その1回分を引きません。`iid_proposal=True`はyi用のcount/$N$近似で、コレーターの抽出方法を変える指定ではありません。
+
+低水準の`candidate_log_q`・`negative_log_partition`・`stable_id`は既存利用との互換性のため残しますが、通常はクラスと`mixed_negative_logq_loss`を使ってください。補助関数だけの`iid_proposal=True, q_measure="inclusion"`は二項分布の包含確率を計算する指定で、yi/inclusionの損失を有効にするものではありません。

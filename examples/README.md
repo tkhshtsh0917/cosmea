@@ -40,6 +40,10 @@ uv run python train_from_csv.py \
 
 This is a training example, not a quality benchmark. Evaluate on separate queries against the full corpus before drawing conclusions about retrieval quality. See the [API guide](../docs/api.md) for the sampling assumptions and [Matryoshka usage](../docs/api.md#train-at-multiple-embedding-sizes) for shorter embeddings.
 
+For a prompt-based model, set `--query-prompt "query: "` and `--document-prompt "passage: "` to the actual prefixes required by the model; these are examples, not universal defaults. `--max-length 256` sets the collator token limit. For Router tasks use the API guide and pass `router_mapping` directly to the collator. TrainingArguments alone does not transfer these settings.
+
+The prompt flags configure training preprocessing; they do not rewrite the saved model's default prompts. Apply the same query/document prefixes when encoding after reload.
+
 ## Check the integration without downloads
 
 [train_example.py](train_example.py) creates a tiny random BERT and synthetic data locally. It exercises ordinary and Cached losses and is used by CI. The extra tokenizer/model construction is for that purpose. Setup and execution are documented in [CONTRIBUTING.md](../CONTRIBUTING.md#offline-example-and-optional-experiment).

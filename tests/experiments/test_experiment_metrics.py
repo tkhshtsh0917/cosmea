@@ -10,7 +10,7 @@ import torch
 
 @pytest.fixture
 def experiment():
-    path = Path(__file__).resolve().parents[1] / "experiments" / "toy_two_tower.py"
+    path = Path(__file__).resolve().parents[2] / "experiments" / "toy_two_tower.py"
     spec = importlib.util.spec_from_file_location("cosmea_toy_experiment", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

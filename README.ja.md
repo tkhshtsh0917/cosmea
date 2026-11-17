@@ -80,6 +80,10 @@ trainer = SentenceTransformerTrainer(
 trainer.train()
 ```
 
+prompt・Routerのtask・長さ制限が必要なら、`prompts`・`router_mapping`・`max_length`を**コレーターへ**渡してください。TrainingArgumentsだけでは独自コレーターへ反映されません。[前処理の例](docs/ja/api.md#前処理を設定する)を参照してください。
+
+未知データの評価には、同じコレーターで`eval_dataset`を処理する代わりに検索用`evaluator`を使います。`eval_dataset`に未知の正例IDがあるとエラーになります。[評価ガイド](docs/ja/api.md#評価と再現性)を参照してください。
+
 頻度は **そのDataLoaderがランダム抽出する学習split** から作ります。`NO_DUPLICATES`、重み付き・グループ化サンプラーを使うと、この頻度から計算したQは合いません。未知のデータでの品質は、全コーパスを検索して評価してください。評価用バッチの損失へ学習頻度を使い回すと、一般に補正が合わなくなります。
 
 通常版・Cached版のどちらも、[MatryoshkaLoss](docs/ja/api.md#複数の埋め込み次元で学習する)で包み、複数の埋め込み次元をまとめて学習できます。
@@ -98,15 +102,17 @@ trainer.train()
 | --- | --- | --- |
 | `yi`（既定） | 正例も補正。`auto`では情報源ごとの損失を平均 | iid提案分布による近似。実際の非復元バッチに有限バッチ一致性を保証しない |
 | `plugin` | 正例は無補正、負例は期待出現回数／包含確率で補正 | 分配関数推定が不偏でも損失・勾配は有限標本で偏る |
-| `improved` | stop-gradientした信頼度重みを掛ける | 2025論文を実際のサンプリング設計に適応。同じ設定のpluginと**一階勾配**が一致。論文・著者コードの逐語的再現ではない |
+| `improved`（研究用） | pluginと同じ一階勾配を持つstop-gradient形 | 損失値は単調でなく、早期終了・最良checkpointの選択には使わない |
 
 `num_uniform=0` でlogQのみ、`logq_strength=0` で補正なし、`combine="pooled"` で候補を一つにまとめます。**素のMNRLとの比較には `logq_strength=0, combine="pooled"`** とマスク条件の統一が必要です。`auto`のyiはseparateなので同じ目的関数にはなりません。
+
+採掘負例はseparateで独立した無補正の目的関数にします。pooledでは相対的な影響が小さくなる場合があります。まずyi/separate、またはplugin/pooledをexpected_countで試してください。
 
 詳細は [API契約](docs/ja/api.md)、[設計と互換性](docs/ja/design.md)、[開発・検証手順](CONTRIBUTING.ja.md) を参照してください。
 
 ## 検証と範囲
 
-抽出確率の計算、損失の勾配、Sentence Transformersとの接続を自動検査しています。通常版・Cached版のCPU学習例も[CI](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml)で確認しています。これらは合成データによる検証で、実データでの改善は別途評価する必要があります。
+抽出確率の計算、損失の勾配、Sentence Transformersとの接続を自動検査しています。通常版・Cached版のCPU Trainer統合テストも[CI](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml)で確認しています。これらは合成データによる検証で、実データでの改善は別途評価する必要があります。
 
 - 検証環境：macOS arm64、Python 3.12.13、ST 6.3.0、PyTorch 2.15.0、Transformers 5.23.0。
 - CPU、単一プロセス学習、有限のmap-style datasetが対象です。CUDA／MPS／DDP／cross-device gather／ストリーミング頻度／複数データセットは未対応または未検証です。

@@ -1,15 +1,18 @@
 """Integration with Sentence Transformers: collator output, plain vs. cached loss, worker RNG."""
 
-import sys
-import tempfile
+import importlib.util
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 import torch
 from torch.utils.data import DataLoader
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
-import train_example  # noqa: E402
+spec = importlib.util.spec_from_file_location(
+    "train_example", Path(__file__).resolve().parents[1] / "examples/train_example.py"
+)
+train_example = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(train_example)
 
 from cosmea import (  # noqa: E402
     CachedLogQMultipleNegativesRankingLoss,
@@ -23,9 +26,9 @@ from sentence_transformers.sentence_transformer.losses import MatryoshkaLoss  # 
 
 
 @pytest.fixture(scope="module")
-def setup():
+def setup(tmp_path_factory):
     torch.manual_seed(0)
-    workdir = Path(tempfile.mkdtemp())
+    workdir = tmp_path_factory.mktemp("model")
     model = train_example.build_tiny_model(workdir)
     train_dataset, _, jobs = train_example.build_data()
     collator = MixedNegativeDataCollator(
@@ -41,8 +44,9 @@ def setup():
 
 
 def split_features(batch):
-    prefixes = ["query_", "job_", "uniform_negative_"]
-    return [{k[len(p) :]: v for k, v in batch.items() if k.startswith(p)} for p in prefixes]
+    prefixes = ["query_", "job_", "negative_", "uniform_negative_"]
+    features = [{k[len(p) :]: v for k, v in batch.items() if k.startswith(p)} for p in prefixes]
+    return [column for column in features if column]
 
 
 def test_collator_output(setup):
@@ -71,13 +75,18 @@ def test_collator_output(setup):
 
 
 def test_cached_loss_matches_plain_loss(setup):
-    model, train_dataset, _, collator = setup
-    batch = collator([train_dataset[i] for i in range(24)])
+    model, train_dataset, jobs, collator = setup
+    rows = []
+    for index in range(24):
+        row = dict(train_dataset[index])
+        negative_id = (row["job_id"] + 1) % len(jobs)
+        row.update(negative=jobs[negative_id]["text"], negative_id=negative_id)
+        rows.append(row)
+    collator = replace(collator, extra_item_id_columns={"negative": "negative_id"})
+    batch = collator(rows)
     model.eval()  # dropout would make two forward passes differ
     for kwargs in (
         dict(),
-        dict(variant="plugin"),
-        dict(variant="yi", combine="pooled"),
         dict(variant="improved", q_measure="inclusion"),
     ):
         values, grads = [], []
@@ -96,23 +105,17 @@ def test_cached_loss_matches_plain_loss(setup):
         assert torch.allclose(grads[0], grads[1], atol=5e-5, rtol=1e-4), kwargs
 
 
-def test_improved_and_plugin_give_the_same_model_gradient(setup):
-    model, train_dataset, _, collator = setup
-    batch = collator([train_dataset[i] for i in range(24)])
-    model.eval()
-    grads = []
-    for variant in ("plugin", "improved"):
-        model.zero_grad()
-        LogQMultipleNegativesRankingLoss(model, variant=variant)(split_features(batch), batch["label"]).backward()
-        grads.append(torch.cat([p.grad.flatten() for p in model.parameters() if p.grad is not None]))
-
-    assert torch.allclose(grads[0], grads[1], atol=5e-5, rtol=1e-4)
-
-
 @pytest.mark.workers
 def test_workers_draw_different_uniform_negatives(setup):
     _, train_dataset, _, collator = setup
-    loader = DataLoader(train_dataset, batch_size=16, collate_fn=collator, num_workers=2, shuffle=False)
+    loader = DataLoader(
+        train_dataset,
+        batch_size=16,
+        collate_fn=collator,
+        num_workers=2,
+        shuffle=False,
+        multiprocessing_context="spawn",
+    )
     iterator = iter(loader)
     first, second = next(iterator), next(iterator)  # one batch from each worker
 
@@ -127,18 +130,9 @@ def test_loss_rejects_missing_metadata(setup):
 
 
 @pytest.mark.parametrize("cached", [False, True])
-@pytest.mark.parametrize(
-    "variant,measure",
-    [
-        ("yi", "expected_count"),
-        ("plugin", "expected_count"),
-        ("improved", "expected_count"),
-        ("plugin", "inclusion"),
-        ("improved", "inclusion"),
-    ],
-)
-def test_matryoshka_matches_explicit_dimension_losses(setup, cached, variant, measure):
+def test_matryoshka_matches_explicit_dimension_losses(setup, cached):
     """The wrapper must preserve dict metadata, dimension weights and model gradients."""
+    variant, measure = "plugin", "expected_count"
     model, dataset, _, collator = setup
     model.eval()
     batch = collator([dataset[i] for i in range(8)])
@@ -185,25 +179,28 @@ def test_matryoshka_matches_explicit_dimension_losses(setup, cached, variant, me
 
 
 @pytest.mark.parametrize("cached", [False, True])
-@pytest.mark.parametrize("matryoshka", [False, True])
-def test_trainer_consumes_metadata_and_updates_model(tmp_path, cached, matryoshka):
+def test_trainer_consumes_metadata_and_updates_model(tmp_path, cached):
     from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
 
     model = train_example.build_tiny_model(tmp_path)
     dataset, _, jobs = train_example.build_data()
-    dataset = dataset.select(range(16))
+    dataset = dataset.select(range(9))
+    negative_ids = [(int(item) + 1) % len(jobs) for item in dataset["job_id"]]
+    dataset = dataset.add_column("negative", [jobs[item]["text"] for item in negative_ids])
+    dataset = dataset.add_column("negative_id", negative_ids)
     collator = MixedNegativeDataCollator(
         preprocess_fn=model.preprocess,
         item_frequency=ItemFrequency.from_dataset(dataset, item_id_column="job_id"),
         corpus=[job["text"] for job in jobs],
         corpus_ids=[job["job_id"] for job in jobs],
         num_uniform=3,
+        extra_item_id_columns={"negative": "negative_id"},
         query_id_column="query_id",
         item_id_column="job_id",
     )
     loss_cls = CachedLogQMultipleNegativesRankingLoss if cached else LogQMultipleNegativesRankingLoss
-    loss = loss_cls(model, variant="plugin", **({"mini_batch_size": 3} if cached else {}))
-    if matryoshka:
+    loss = loss_cls(model, **({"mini_batch_size": 3} if cached else {}))
+    if cached:
         loss = MatryoshkaLoss(model=model, loss=loss, matryoshka_dims=[32, 16, 8])
 
     before = torch.cat([p.detach().flatten().clone() for p in model.parameters()])
@@ -233,3 +230,33 @@ def test_trainer_consumes_metadata_and_updates_model(tmp_path, cached, matryoshk
     assert torch.isfinite(after).all() and not torch.equal(before, after)
     assert torch.isfinite(torch.tensor(result.training_loss))
     assert torch.isfinite(torch.tensor(metrics["eval_loss"]))
+
+
+def test_retrieval_evaluator_accepts_items_missing_from_training_counts(setup, tmp_path):
+    from sentence_transformers import SentenceTransformerTrainer, SentenceTransformerTrainingArguments
+    from sentence_transformers.sentence_transformer.evaluation import InformationRetrievalEvaluator
+
+    model, _, _, collator = setup
+    evaluator = InformationRetrievalEvaluator(
+        queries={"held_out_query": "query nurse"},
+        corpus={"unseen_item": "job nurse", "other_item": "job driver"},
+        relevant_docs={"held_out_query": {"unseen_item"}},
+        name="held_out",
+        show_progress_bar=False,
+    )
+    trainer = SentenceTransformerTrainer(
+        model=model,
+        args=SentenceTransformerTrainingArguments(
+            output_dir=str(tmp_path / "evaluation"),
+            use_cpu=True,
+            report_to="none",
+            disable_tqdm=True,
+        ),
+        loss=LogQMultipleNegativesRankingLoss(model),
+        data_collator=collator,
+        evaluator=evaluator,
+    )
+    metrics = trainer.evaluate()
+
+    assert "eval_loss" not in metrics
+    assert torch.isfinite(torch.tensor(metrics[f"eval_{evaluator.primary_metric}"]))

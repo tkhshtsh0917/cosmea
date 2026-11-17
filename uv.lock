@@ -183,6 +183,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+train = [
+    { name = "sentence-transformers", extra = ["train"] },
+]
+
+[package.dev-dependencies]
 dev = [
     { name = "build" },
     { name = "mypy" },
@@ -190,23 +195,24 @@ dev = [
     { name = "ruff" },
     { name = "setuptools" },
 ]
-train = [
-    { name = "sentence-transformers", extra = ["train"] },
-]
 
 [package.metadata]
 requires-dist = [
-    { name = "build", marker = "extra == 'dev'", specifier = ">=1,<2" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = "==2.4.1" },
     { name = "numpy", specifier = ">=2,<3" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9,<10" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14" },
     { name = "sentence-transformers", specifier = ">=6.3,<6.4" },
     { name = "sentence-transformers", extras = ["train"], marker = "extra == 'train'", specifier = ">=6.3,<6.4" },
-    { name = "setuptools", marker = "extra == 'dev'", specifier = ">=77.0.3" },
-    { name = "torch", specifier = ">=2.15,<2.16" },
+    { name = "torch", specifier = ">=2.6,<3" },
 ]
-provides-extras = ["train", "dev"]
+provides-extras = ["train"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "build", specifier = ">=1,<2" },
+    { name = "mypy", specifier = "==2.4.1" },
+    { name = "pytest", specifier = ">=9,<10" },
+    { name = "ruff", specifier = ">=0.14" },
+    { name = "setuptools", specifier = ">=77.0.3" },
+]
 
 [[package]]
 name = "cuda-bindings"

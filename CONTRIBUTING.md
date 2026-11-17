@@ -4,23 +4,18 @@
 
 ## Project settings
 
-| Setting | Decision / source of truth |
+| Setting | Source of truth |
 | --- | --- |
-| Deliverable | Python retrieval-training library, `cosmea` |
-| Environment | CPU, single training process, finite map-style datasets; locally verified on macOS arm64; Ubuntu 24.04 runs the same checks in [GitHub Actions](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml) |
-| Runtime | Development Python is pinned in `.python-version`; supported minimum is declared in `pyproject.toml` |
-| Tools | mise manages uv and Betterleaks versions in `mise.toml`; uv manages Python and the virtual environment |
-| Dependencies | Compatibility ranges and extras in `pyproject.toml`; exact development resolution in committed `uv.lock` |
-| Formatting / lint / types | Ruff format and lint; mypy for all package modules. Configurations in `pyproject.toml` |
-| Verification | `mise run check`: format, lint, types, tests, offline training examples, build, public-content audit and Betterleaks |
-| Compatibility | Preserve exported class names and metadata ordering. Changes to proposal measures, masks or defaults require corresponding contract updates |
-| Resource limits | `0 <= K <= M`, `1 <= B <= N`, positive cached chunk size. Detailed compute and memory scope in [design](docs/design.md) |
-| Public documentation | English README, API, design and contributor guide, with Japanese counterparts |
-| Distribution | Apache-2.0; [LICENSE](LICENSE) and [NOTICE](NOTICE.md) are included in wheel and sdist. No registry, deployment or package release configured |
-| Acceptance | Checks pass; public docs are self-contained; artifacts exclude private records. No claim of real-data performance |
-| Git permissions | Local edits/tests are within the assigned development task. Commit, history rewrite, push, tag and publication each need explicit maintainer authorization; none is implied by a passing check |
+| Library | `src/cosmea`; CPU, one training process, finite datasets |
+| Python | Development version in `.python-version`; supported minimum in `pyproject.toml` |
+| Tools | mise pins uv and Betterleaks in `mise.toml` |
+| Dependencies | Runtime ranges and the `train` extra in `pyproject.toml`; development tools in the `dev` dependency group |
+| Reproducibility | `uv.lock` pins the main development and CI environment |
+| Quality | Ruff formatting/lint, mypy, pytest, build, public-content and license audit, Betterleaks |
+| Documentation | English and Japanese README, API, design, examples and this guide |
+| License | Apache-2.0; LICENSE and NOTICE are included in wheel and sdist |
 
-The package version is defined by `project.version`; the exported `__version__` must agree. Runtime dependencies are Sentence Transformers, PyTorch and NumPy. The `train` extra supplies Trainer integration dependencies (datasets/Accelerate); `dev` supplies development tools. Sentence Transformers uses Apache-2.0. PyTorch and NumPy distributions include multiple licenses; consult the installed metadata and bundled LICENSE files. These are separate from the license of Cosmea itself. Updating the pinned ST minor version requires rechecking the collator, Trainer metadata transfer and GradCache interfaces.
+The package version is defined by `project.version`; the exported `__version__` must agree. Changes to metadata ordering, sampling, masks or defaults require matching API documentation and behavioral tests. The sampling and resource limits are explained in [design](docs/design.md).
 
 ## Setup and validation
 
@@ -36,47 +31,54 @@ mise run setup
 mise run check
 ```
 
-`setup` is the explicit dependency-install step. Check tasks use `uv run --frozen --no-sync` and build without isolation so they do not silently change tool or dependency versions. A fresh environment must run setup first. For intentional updates, change the relevant source of truth, run `mise exec -- uv lock`, review the lock diff, then setup and check again. `mise run format` applies formatting; `format-check` only verifies it.
+`setup` installs the locked training dependencies and `dev` group. `check` does not resolve or update dependencies: it uses `uv run --frozen --no-sync` and builds without isolation. For an intentional dependency change, edit `pyproject.toml`, run `mise exec -- uv lock`, review the diff, then run setup and check. `mise run format` applies formatting.
 
-All tests use local synthetic inputs. Statistical tests are small enumeration/Monte Carlo checks, not production benchmarks. The worker test needs OS shared memory. In constrained environments, run both parts separately and state any unexecuted part:
+The main CI job runs the same locked setup/check tasks. Separate compatibility jobs explicitly resolve Python 3.11 with Torch 2.6/NumPy 2.0 and Python 3.13 within the declared ranges, record installed versions, and run tests. These jobs do not replace the locked reference environment. Actions are pinned to commit SHAs; update the SHA and version comment together.
+
+## Tests and examples
+
+Tests at the root of `tests/` cover the library, including small exact sampling oracles and Trainer integration. `tests/tooling/` checks development audits; `tests/experiments/` checks synthetic metric definitions. All are included in `mise run check`.
+
+The real DataLoader worker test exercises process initialization and needs OS shared memory. If the environment restricts it, run the two groups separately and report any unexecuted group:
 
 ```bash
 mise exec -- uv run --frozen --no-sync pytest -m 'not workers' -q
 mise exec -- uv run --frozen --no-sync pytest -m workers -q
 ```
 
-The CI workflow runs the same setup and check tasks with read-only repository permission. Creating a workflow does not constitute a hosted CI run. No publishing job is included.
-
-## Changes and reviews
-
-Separate responsibilities across `src/cosmea`, `tests`, `examples`, `experiments` and `scripts`. Keep meaningful blank lines between input validation, computation and state changes; apply the same readability standard to tests and tooling. Explain input shapes, failures, numerical choices and side effects in docstrings. Put attribution and development history in human documentation.
-
-Fixes need behavioral regression coverage and checks of related boundary inputs and call paths. Test against independent mathematical oracles where possible. Do not replace a proof with a stationarity check or treat a synthetic training run as effectiveness evidence. Review code, dependencies, diagrams, documentation and packaging together. For performance claims, record both versions, inputs, environment, warmup, repetition and aggregation, including regressions on other inputs.
-
-Maintain English and Japanese docs together. Keep public files free of personal paths, private references and secrets. `scripts/check_public.py` checks navigation, obvious local paths and artifact payloads; it is not a general secret scanner. Preserve upstream attribution. Keep private records out of Git and artifacts, and preserve historical snapshots unchanged.
-
-## Builds and future releases
-
-`mise run build` produces one wheel and sdist in `dist`; `mise run audit` inspects both, including the Apache-2.0 metadata and matching LICENSE/NOTICE contents. The SPDX expression and license-file list are declared in `pyproject.toml`. The build backend requires setuptools 77.0.3 or later for PEP 639 metadata support; the development version is locked in `uv.lock`.
-
-Remove stale build artifacts when changing versions. Third parties can build from the sdist without private inputs. Before a future release, a maintainer must choose a release destination, authorize the Git/release actions, confirm hosted CI, inspect public history/author identity, verify license and notice inclusion, and record artifact checksums. Publishing is outside this development task.
-
-## Secret scanning and readable examples
-
-`mise run secrets` runs [Betterleaks](https://github.com/betterleaks/betterleaks/tree/v1.10.1) (MIT), pinned in `mise.toml`, after the build. It scans the public file inventory, unpacked wheel/sdist contents, and all locally available Git refs when commits exist. CI checks out full history; shallow local clones must fetch missing history. An uncommitted repository or source archive reports the absence of history explicitly. Detection uses the pinned built-in rules, with provider validation disabled; findings and scanner errors fail the check. Redacted JSON reports stay in ignored `build/security/`. No blanket allowlist or baseline is applied. This is pattern detection, not a guarantee that all secrets are absent.
-
-Format multiline calls with one argument per line and a trailing comma. Apply this to public code examples as well as source code; keep short, simple calls on one line when that is clearer. Split grouped imports when a long import would impede reading.
-
 ## Offline example and optional experiment
 
-After `mise run setup`, `mise run smoke` runs both ordinary and cached training with a tiny local BERT and synthetic data. No pretrained model download is needed. `mise run check` also includes these runs.
+`mise run smoke` runs the ordinary and cached example with a tiny local BERT and synthetic data. It requires no model download. It is optional: the standard check already tests training through the Trainer, including mined negatives and a singleton final batch.
 
-For a longer synthetic comparison:
+For a longer synthetic quality comparison:
 
 ```bash
 mise exec -- uv run --frozen --no-sync python experiments/toy_two_tower.py --seeds 3 --out results.json
 ```
 
-This optional experiment is not part of the standard checks. It saves arguments and seed-level results; retain the source revision and environment alongside any results you compare. The full default experiment has not been rerun for this revision. See [design](docs/design.md) for metric definitions.
+For statistical illustrations outside the regression suite:
 
-Repository layout: `src/cosmea` contains the library, `examples` runnable usage, `tests` verification, `experiments` optional comparisons, and `scripts` development checks.
+```bash
+mise exec -- uv run --frozen --no-sync python experiments/diagnostics/estimators.py --trials 2000
+mise exec -- uv run --frozen --no-sync python experiments/diagnostics/stationarity.py --max-negatives 2
+```
+
+These illustrate selected distributions, not general variance rankings or proofs of consistency. Exact enumeration grows exponentially. Keep arguments, seeds, source revision and environment with results. The full default quality experiment has not been rerun for this revision. See [design](docs/design.md) for metrics and assumptions.
+
+## Reviews and readable code
+
+Keep responsibilities separate across `src/cosmea`, `examples`, `tests`, `experiments` and `scripts`. Use meaningful blank lines between input validation, computation and state changes. In multiline calls, put one argument per line with trailing commas; keep simple short calls compact. Explain shapes, failures and important constraints in docstrings.
+
+Fixes need tests that would fail before the fix, preferably with independent mathematical oracles. Cover relevant boundaries without repeating the same property across every parameter combination. Synthetic interface tests do not establish real-data quality. Record the inputs, versions and measurement method for performance claims.
+
+Update English and Japanese docs together. Public files must be sufficient without local notes and must not contain personal paths or private links. Agent-specific operation rules are in [AGENTS.md](AGENTS.md).
+
+## Builds, licensing and secret scanning
+
+`mise run build` produces one wheel and sdist in `dist`. The `secrets` task first performs the public-content/license audit, then runs Betterleaks; `check` invokes this combined task once. `mise run audit` remains available to run the audit alone.
+
+The audit checks license metadata and byte-for-byte LICENSE/NOTICE contents, the typing marker, and that sdist members belong to the public source inventory or named build-generated metadata. This is separate from secret detection. Setuptools 77.0.3 or later is required for PEP 639 metadata; its development version is locked. Remove stale artifacts when changing package versions.
+
+Betterleaks uses the pinned built-in rules and scans public files, extracted artifacts and all locally available Git refs. Provider validation is disabled; findings and scanner errors fail the task. Redacted reports remain in ignored `build/security/`. Shallow clones fail the history check: fetch the missing history yourself before retrying. Pattern detection does not guarantee that no secrets exist.
+
+Dependencies retain their own licenses. ST uses Apache-2.0; PyTorch and NumPy distributions include multiple licenses. Preserve required third-party notices if incorporating their material. Before a package release, confirm hosted CI, inspect artifacts and licensing, record checksums, and follow the maintainer's release process. No package publishing job is configured.

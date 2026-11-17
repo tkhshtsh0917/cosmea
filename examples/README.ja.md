@@ -40,6 +40,10 @@ uv run python train_from_csv.py \
 
 これは学習手順の例であり、品質ベンチマークではありません。検索品質を判断する前に、別のクエリでコーパス全体を検索して評価してください。抽出条件は[APIガイド](../docs/ja/api.md)、短い埋め込みでも学習する方法は[Matryoshkaの利用](../docs/ja/api.md#複数の埋め込み次元で学習する)を参照してください。
 
+promptを使うモデルでは、`--query-prompt "query: "`・`--document-prompt "passage: "`へモデルが要求する接頭辞を指定します。ここで示した文字列は例で、全モデルの既定値ではありません。`--max-length 256`はコレーターのトークン上限です。RouterのtaskはAPIガイドに従い、コレーターへ`router_mapping`を直接渡します。TrainingArgumentsだけではこれらの設定は転送されません。
+
+promptの引数は学習時の前処理を設定するもので、保存モデルの既定promptを書き換えません。再読込後のエンコードにも、同じquery／documentの接頭辞を適用してください。
+
 ## ダウンロードなしで接続を確認する
 
 [train_example.py](train_example.py)は、小さなランダム初期化BERTと合成データをローカルで作ります。通常版・Cached版の動作確認とCIに使うため、tokenizerやモデルを自作する処理が含まれています。実行手順は[CONTRIBUTING.ja.md](../CONTRIBUTING.ja.md#オフライン学習例と任意の実験)にあります。

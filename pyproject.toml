@@ -10,19 +10,24 @@ readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE.md"]
 requires-python = ">=3.11"
-dependencies = ["sentence-transformers>=6.3,<6.4", "torch>=2.15,<2.16", "numpy>=2,<3"]
+dependencies = ["sentence-transformers>=6.3,<6.4", "torch>=2.6,<3", "numpy>=2,<3"]
 
 [project.optional-dependencies]
 train = ["sentence-transformers[train]>=6.3,<6.4"]
+
+[dependency-groups]
 dev = ["pytest>=9,<10", "build>=1,<2", "setuptools>=77.0.3", "ruff>=0.14", "mypy==2.4.1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["cosmea*"]
 
+[tool.setuptools.package-data]
+cosmea = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: exact enumeration or Monte Carlo verification", "workers: multiprocessing DataLoader tests"]
+markers = ["workers: multiprocessing DataLoader tests"]
 
 [tool.ruff]
 line-length = 120

@@ -9,7 +9,7 @@ import pytest
 @pytest.fixture
 def audit(tmp_path, monkeypatch):
     """Load the development checker against an isolated public document tree."""
-    script = Path(__file__).resolve().parents[1] / "scripts" / "check_public.py"
+    script = Path(__file__).resolve().parents[2] / "scripts" / "check_public.py"
     spec = importlib.util.spec_from_file_location("cosmea_public_check", script)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

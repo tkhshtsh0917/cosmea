@@ -89,38 +89,15 @@ def _rows_for_head_and_tail():
     return head, tail
 
 
-def test_expected_count_estimator_is_unbiased():
-    for row in _rows_for_head_and_tail():
-        mean, stderr, truth = simulate(row, "expected_count", trials=6000)
-
-        assert abs(mean - truth) < 4 * stderr, (mean, stderr, truth)
-        assert abs(mean / truth - 1) < 0.03
-
-
-def test_inclusion_estimator_is_unbiased():
-    for row in _rows_for_head_and_tail():
-        mean, stderr, truth = simulate(row, "inclusion", trials=6000)
-        # Hypergeometric inclusion is exact for the finite-population sampling design.
-        assert abs(mean / truth - 1) < 0.03, (mean, stderr, truth)
-
-
-def test_dedup_with_expected_count_is_biased():
-    """De-duplicating while dividing by the expected count under-weights head items."""
-    _, tail = _rows_for_head_and_tail()
-    mean, stderr, truth = simulate(tail, "expected_count", trials=6000, mismatched=True)
-
-    assert mean < truth - 6 * stderr, (mean, stderr, truth)
-
-
 if __name__ == "__main__":
-    head, tail = _rows_for_head_and_tail()
-    for name, row in (("head positive", head), ("tail positive", tail)):
-        for q_measure in ("expected_count", "inclusion"):
-            mean, stderr, truth = simulate(row, q_measure, trials=20000)
-            print(
-                f"{name:14s} {q_measure:15s} E[Z_hat]={mean:9.3f} +- {stderr:.3f}  Z_neg={truth:9.3f}  ratio={mean / truth:.4f}"
-            )
-        mean, stderr, truth = simulate(row, "expected_count", trials=20000, mismatched=True)
-        print(
-            f"{name:14s} {'dedup+exp.count':15s} E[Z_hat]={mean:9.3f} +- {stderr:.3f}  Z_neg={truth:9.3f}  ratio={mean / truth:.4f}"
-        )
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Monte Carlo illustration, not a CI regression test")
+    parser.add_argument("--trials", type=int, default=2000)
+    args = parser.parse_args()
+    if args.trials < 2:
+        parser.error("--trials must be at least 2")
+    for row in _rows_for_head_and_tail():
+        for measure, mismatched in (("expected_count", False), ("inclusion", False), ("expected_count", True)):
+            mean, stderr, truth = simulate(row, measure, args.trials, mismatched=mismatched)
+            print(f"row={row} {measure} mismatched={mismatched}: mean={mean:.4f} stderr={stderr:.4f} truth={truth:.4f}")

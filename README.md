@@ -78,6 +78,10 @@ trainer = SentenceTransformerTrainer(
 trainer.train()
 ```
 
+If the model needs prompts, Router tasks or length limits, pass `prompts`, `router_mapping` and `max_length` to the **collator**. TrainingArguments alone does not configure a custom collator. See the [preprocessing example](docs/api.md#set-prompts-router-tasks-and-length-limits).
+
+For held-out evaluation, use a retrieval `evaluator` instead of reusing this collator with `eval_dataset`. Unknown positive IDs in `eval_dataset` cause an error; see the [evaluation guide](docs/api.md#evaluate-and-reproduce-a-run).
+
 Compute frequencies from the **same split that the DataLoader samples uniformly**. NO_DUPLICATES, weighted or grouped samplers invalidate this proposal model. For held-out quality, evaluate retrieval against the full corpus; reusing training frequencies for held-out in-batch loss generally gives the wrong correction.
 
 Both loss classes can also be wrapped in [MatryoshkaLoss](docs/api.md#train-at-multiple-embedding-sizes) to train several embedding sizes together.
@@ -96,15 +100,17 @@ Both loss classes can also be wrapped in [MatryoshkaLoss](docs/api.md#train-at-m
 | --- | --- | --- |
 | `yi` (default) | Correct positives too; auto averages separate source objectives | Empirical iid proposal approximation, not a finite-batch consistency guarantee for the actual collator |
 | `plugin` | Positive weight one; correct negatives by expected counts or inclusion probabilities | An unbiased partition estimate does not imply unbiased finite-sample loss/gradients |
-| `improved` | Stop-gradient confidence-weighted objective | Sampling-design adaptation of the 2025 formulation; same first gradient as plugin under identical options, not literal reproduction of the paper or author code |
+| `improved` (research) | Stop-gradient form with the same first gradient as plugin | Its non-monotonic scalar loss is unsuitable for early stopping or best-checkpoint selection |
 
 Use `num_uniform=0` for logQ alone, `logq_strength=0` for no correction and `combine="pooled"` for one joint candidate softmax. A plain-MNRL comparison needs **both `logq_strength=0, combine="pooled"` and matching masks**; yi's auto/separate mode is a different objective.
+
+For mined negatives, separate mode gives them an independent uncorrected objective; pooled mode can reduce their relative influence. Start with yi/separate or plugin/pooled and expected counts.
 
 See the [API contract](docs/api.md), [design and compatibility](docs/design.md), and [development checks](CONTRIBUTING.md).
 
 ## Validation and limits
 
-Automated checks cover the sampling calculations, loss gradients and Sentence Transformers integration. Both ordinary and cached CPU training examples run in [CI](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml). These checks use synthetic data; real-data improvements need separate evaluation.
+Automated checks cover the sampling calculations, loss gradients and Sentence Transformers integration. Both ordinary and cached CPU Trainer integration tests run in [CI](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml). These checks use synthetic data; real-data improvements need separate evaluation.
 
 - Verified environment: macOS arm64, Python 3.12.13, ST 6.3.0, PyTorch 2.15.0, Transformers 5.23.0.
 - CPU, single training process, finite map-style datasets. CUDA/MPS, DDP, cross-device gathering, streaming counts and multiple datasets are unsupported or unverified.

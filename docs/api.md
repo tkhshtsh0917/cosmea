@@ -23,6 +23,29 @@ Use the same ID for the same item everywhere. IDs may be strings, bytes, or sign
 
 A positive ID missing from `ItemFrequency` causes an error. Repeated corpus IDs are merged, keeping the first text; sampling is uniform over the remaining distinct IDs.
 
+## Set prompts, Router tasks and length limits
+
+Pass `prompts`, `router_mapping` and `max_length` directly to `MixedNegativeDataCollator`. Sentence Transformers does not copy these TrainingArguments settings into a custom collator. Setting them only on the Trainer can silently omit the expected preprocessing.
+
+The following illustrates a Router model with query/document tasks. Use the prompts and task names your model requires; for an ordinary model omit `router_mapping` and use an integer `max_length`.
+
+```python
+collator = MixedNegativeDataCollator(
+    preprocess_fn=model.preprocess,
+    item_frequency=frequency,
+    corpus=corpus_texts,
+    corpus_ids=corpus_ids,
+    num_uniform=64,
+    query_id_column="query_id",
+    item_id_column="item_id",
+    prompts={"query": "query: ", "positive": "passage: "},
+    router_mapping={"query": "query", "positive": "document"},
+    max_length={"query": 64, "document": 256},
+)
+```
+
+Uniform candidates always use the positive column's prompt, task and length limit. Configure extra mined columns explicitly when they need document preprocessing too. Keep evaluation/inference prompts consistent with training. Router metadata transfer is tested; full training of a Router model remains unverified.
+
 ## Add your own negative examples
 
 Extra text columns, such as a hard negative found by another retriever, are also included as candidates. Their sampling probability is unknown, so Cosmea leaves these extra terms uncorrected.
@@ -40,9 +63,11 @@ collator = MixedNegativeDataCollator(
 
 This lets Cosmea recognize that two different texts refer to the same item. A missing mapping causes an error.
 
+Use `combine="separate"` to give mined negatives their own uncorrected objective (the default for yi). In pooled mode their influence can shrink relative to corrected candidates as the training population grows; see [mined negatives and monitoring](design.md#mined-negatives-and-loss-monitoring).
+
 ## Choose the main options
 
-The defaults are a starting point for comparison, not a claim that one configuration always works best.
+Start with yi/separate or plugin/pooled, both using expected counts. These are starting points for comparison, not a claim that one always works best. `improved`, inclusion and mask overrides are advanced research controls; `improved` must not be selected by its scalar evaluation loss.
 
 | Option | Meaning |
 | --- | --- |
@@ -54,7 +79,7 @@ The defaults are a starting point for comparison, not a claim that one configura
 | `q_measure` | `expected_count` keeps repeated items and uses their expected number of appearances. `inclusion` keeps one eligible occurrence per item and uses the chance of appearing at least once. Inclusion is unavailable with yi |
 | `mini_batch_size` | Positive integer chunk size for the Cached loss. Smaller chunks reduce score-matrix memory. Gradient accumulation alone does not increase the candidate pool |
 
-A source with no usable negatives for a query is left out of the separate average. For example, a batch with one training row does not halve the uniform-source loss by averaging it with an empty in-batch loss.
+In-batch, uniform and extra mined candidates are separate sources. A source with no usable negatives for a query is left out of the separate average. For example, a batch with one training row does not halve the uniform-source loss by averaging it with an empty in-batch loss.
 
 ## Avoid treating known matches as negatives
 
@@ -62,6 +87,8 @@ A source with no usable negatives for a query is left out of the separate averag
 
 - `mask_same_item=None` keeps accidental occurrences of the positive item for yi and excludes them for plugin/improved. Setting True or False overrides this choice and changes the objective.
 - `mask_same_query=True` uses the positives attached to matching queries in the current batch. It cannot find all relevant items in the corpus. This filtering is a practical heuristic; the strict unbiased-estimator result does not cover it.
+
+With yi defaults (`mask_same_item=False`), query matching excludes matching positive columns only; copies in uniform/mined columns remain eligible. Set `mask_same_item=True` to propagate known item matches to all candidate columns, which changes the yi objective.
 
 For yi with a separate uniform loss, every positive ID must also occur in the corpus. Cosmea reports an error when this condition is not met.
 
@@ -71,9 +98,24 @@ Use the default uniform random row sampler. `NO_DUPLICATES`, weighted samplers a
 
 Build counts from the sampled training split. For held-out quality, search the full corpus and compute retrieval metrics. Reusing training counts for a different evaluation split generally gives the wrong sampling correction. The Trainer evaluation test checks that metadata reaches the loss; it is not a held-out quality result.
 
+For held-out quality, pass a retrieval `evaluator` to the Trainer and omit `eval_dataset`. `eval_queries` maps query IDs to text; `eval_relevant_docs` maps those IDs to sets of relevant corpus IDs. IDs must match the corpus dictionary. Supply the model's evaluation prompts if needed.
+
+```python
+from sentence_transformers.sentence_transformer.evaluation import InformationRetrievalEvaluator
+
+evaluator = InformationRetrievalEvaluator(
+    queries=eval_queries,
+    corpus=dict(zip(corpus_ids, corpus_texts)),
+    relevant_docs=eval_relevant_docs,
+    name="held_out",
+)
+```
+
+Pass this as `evaluator=evaluator` alongside the training dataset and collator. An `eval_dataset` containing positive IDs absent from training counts raises `Positive ID absent from item_frequency`; even if all IDs exist, training counts generally give the wrong evaluation proposal. The collator is not a full-corpus evaluator. For early stopping or best-checkpoint selection, use a held-out retrieval metric, not the `improved` scalar loss.
+
 Each DataLoader worker gets its own random stream derived from PyTorch's RNG. The same launch conditions are needed for reproducibility. Restoring the exact collator stream from a checkpoint, or keeping identical draws after changing the worker count, is not guaranteed.
 
-The supported ranges are Sentence Transformers `>=6.3,<6.4` and PyTorch `>=2.15,<2.16`. CPU with one training process is verified. GPU, distributed training and streaming datasets need additional validation; see [design](design.md#resource-and-compatibility-limits).
+The supported ranges are Sentence Transformers `>=6.3,<6.4` and PyTorch `>=2.6,<3`, with NumPy `>=2,<3`. CPU with one training process is verified. GPU, distributed training and streaming datasets need additional validation; see [design](design.md#resource-and-compatibility-limits).
 
 ## Train at multiple embedding sizes
 
@@ -97,7 +139,7 @@ Pass `loss` to the Trainer and keep the same `MixedNegativeDataCollator`. To use
 
 Cosmea's sampling metadata is independent of embedding size, so the same IDs and counts are used at each size. With weights $w_m$, the combined loss is $\sum_m w_m\ell_m$; the weights default to 1 and are not automatically averaged.
 
-CPU tests compare plain and cached wrappers with explicit losses at 32, 16 and 8 dimensions, including unequal weights. They cover yi/expected-count, plugin and improved with expected-count or inclusion, plus Trainer training/evaluation for plugin. This verifies integration and gradients, not retrieval quality after truncation. Random dimension subsets (`n_dims_per_step`), GPU and Matryoshka2dLoss have not been tested here.
+CPU tests compare plain and cached wrappers with explicit losses at 32, 16 and 8 dimensions, including unequal weights. The wrapper comparison uses plugin/expected-count; score-level tests cover variant identities separately. Trainer tests also exercise a singleton final batch with mined negatives, using plain yi and cached yi wrapped in Matryoshka. This verifies integration and gradients, not retrieval quality after truncation. Random dimension subsets (`n_dims_per_step`), GPU and Matryoshka2dLoss have not been tested here.
 
 ## Reference: metadata passed to the loss
 
@@ -117,3 +159,5 @@ Let $B$ be the number of training rows, $H$ the number of extra negative columns
 These tensors travel in `batch["label"]`; they are not model input features. Loss classes return a scalar mean. `mixed_negative_logq_loss` returns one value per query row, shape $(b,)$. For a chunk, `rows` identifies the original batch rows and their positive candidate columns.
 
 `candidate_log_q(..., rows=...)` returns shape $(b,C)$ and accounts for the positive row already being selected. Without `rows`, it returns $(C,)$ and does not subtract that occurrence. `iid_proposal=True` uses the count/$N$ approximation for yi; it does not change how the collator samples.
+
+Low-level helpers (`candidate_log_q`, `negative_log_partition`, `stable_id`) remain available for existing callers, but the classes and `mixed_negative_logq_loss` are the main usage API. The helper-only `iid_proposal=True, q_measure="inclusion"` computes binomial inclusion; it does not enable yi/inclusion losses.

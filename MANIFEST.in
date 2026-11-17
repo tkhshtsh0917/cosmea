@@ -6,6 +6,5 @@ recursive-include examples *.py *.md
 recursive-include experiments *.py
 recursive-include tests *.py
 recursive-include scripts *.py
-prune research
 prune .private
 prune .venv
