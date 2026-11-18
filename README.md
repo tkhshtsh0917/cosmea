@@ -1,142 +1,41 @@
-# Cosmea — sampling-aware retrieval training
+# Cosmea
 
 [日本語](README.ja.md)
 
-Cosmea adds **logQ correction and Mixed Negative Sampling (MNS)** to Sentence Transformers. The standard random row sampler selects training examples; a collator adds uniform corpus negatives and sampling metadata; the loss corrects temperature-scaled logits.
+Cosmea adds two tools for fine-tuning a Sentence Transformers model for search. **Mixed Negative Sampling** adds comparison documents drawn from the searchable corpus, including documents without clicks. **logQ correction** adjusts the training loss for differences in how often documents are sampled.
 
-The name *Cosmea* comes from cosmos flowers and their association with harmony.
+Cosmea is an Apache-2.0 development project. The examples run on CPU, and the [design guide](docs/design.md#resource-and-compatibility-limits) covers the supported setup. The tests verify the loss and training integration. Retrieval gains on real data still need to be measured.
 
-Development version `0.1.0.dev0`. CPU mathematical and integration checks were run on 2026-11-18. Real-data effectiveness is unverified. Correcting negative sampling does not guarantee reduced popularity concentration or causal fairness.
+## Quickstart
 
-## Installation
-
-In your Python project, install Cosmea directly from GitHub with [uv](https://docs.astral.sh/uv/):
+Fine-tune a small English model on three example pairs, save it, and use the saved model to search six documents. Run these commands in Bash or a compatible shell with [uv](https://docs.astral.sh/uv/), Git and curl installed. The first run downloads `sentence-transformers/all-MiniLM-L6-v2` from Hugging Face. On Linux, the default PyTorch package can pull in several GB of GPU libraries even though the example trains on CPU.
 
 ```bash
+uv init --python 3.12 cosmea-quickstart
+cd cosmea-quickstart
+
 uv add "cosmea[train] @ git+https://github.com/tkhshtsh0917/cosmea"
+curl --fail --location --output quickstart.py https://raw.githubusercontent.com/tkhshtsh0917/cosmea/main/examples/quickstart.py
+
+uv run python quickstart.py
 ```
 
-The `train` extra includes the dependencies needed by `SentenceTransformerTrainer`. If you only need the collator and loss functions, install `cosmea` without `[train]`. Python 3.12 is used in our checks; supported dependency ranges are listed in the [API guide](docs/api.md).
+Look for `Saved model:` and `Top result:` in the output. The script saves the model to `outputs/quickstart/model`, reloads it, and prints the top document for a question about bicycle tires. You can read the training pairs and corpus in [quickstart.py](examples/quickstart.py).
 
-uv records the resolved Git commit in your project's `uv.lock`. To choose a specific revision, add `--rev` followed by a commit SHA to the command above.
+The script also prints `nDCG@3` and `Recall@3` for the initial and fine-tuned models on the same two held-out queries and the same corpus. nDCG rewards relevant documents near the top, and Recall measures how many known relevant documents appear in the top three. The example runs one training step. Unchanged scores are normal, and the comparison shows how to evaluate retrieval. Use your own held-out queries and relevance judgments to assess quality.
 
-For contributing, running the offline example, or building the package, see [CONTRIBUTING.md](CONTRIBUTING.md).
+To use an existing local Sentence Transformers model instead of downloading one, pass `--model <directory>` to the script. If you already have a Python project, run the install command there. The `train` extra provides the Trainer dependencies. uv records the Git revision in `uv.lock`. When pinning a commit with `uv add --rev <commit-sha>`, replace `main` in the curl URL with that same SHA.
 
 ## Use your own data
 
-For complete scripts, see the [CSV training example](examples/README.md#train-with-your-own-data) or [mine, train, and rerank](examples/README.md#mine-hard-negatives-train-and-rerank).
+- [Train from CSV](examples/README.md#train-with-your-own-data) takes query–document pairs and a corpus with document IDs.
+- [Integrate with Sentence Transformers](docs/api.md) explains how to prepare a dataset, connect the collator and loss, and evaluate retrieval.
+- [Mine hard negatives and rerank](examples/README.md#mine-hard-negatives-train-and-rerank) adds hard negatives during training and measures the effect of a CrossEncoder on the trained retriever's top candidates.
 
-Prepare a model, a training dataset with ordered columns `anchor, positive, query_id, document_id`, and aligned corpus text/ID lists. The anchor contains the query text and the positive contains the matching document text.
+## Documentation
 
-```python
-from sentence_transformers import (
-    SentenceTransformer,
-    SentenceTransformerTrainer,
-    SentenceTransformerTrainingArguments,
-)
-from sentence_transformers.base.sampler import BatchSamplers
-from cosmea import (
-    DocumentFrequency,
-    MixedNegativeDataCollator,
-    LogQMultipleNegativesRankingLoss,
-)
+- [Public API](docs/reference.md) lists the classes and functions, with links to their source and instructions for rendering the API reference.
+- [Design](docs/design.md) explains the correction, sampling assumptions, loss variants and their limits.
+- [Contributing](CONTRIBUTING.md) covers setup, checks and documentation builds.
 
-model = SentenceTransformer("path/to/local/model", device="cpu")
-frequency = DocumentFrequency.from_dataset(train_dataset, document_id_column="document_id")
-
-collator = MixedNegativeDataCollator(
-    preprocess_fn=model.preprocess,
-    document_frequency=frequency,
-    corpus=corpus_texts,
-    corpus_ids=corpus_ids,
-    num_uniform=64,  # Must not exceed the distinct corpus size.
-    query_id_column="query_id",
-    document_id_column="document_id",
-)
-
-loss = LogQMultipleNegativesRankingLoss(
-    model,
-    variant="plugin",
-    combine="pooled",
-    logq_strength=1.0,
-    mask_same_document=True,
-    mask_same_query=True,
-)
-
-args = SentenceTransformerTrainingArguments(
-    output_dir="outputs/run",
-    per_device_train_batch_size=64,
-    batch_sampler=BatchSamplers.BATCH_SAMPLER,
-    use_cpu=True,
-    report_to="none",
-    save_strategy="no",
-)
-
-trainer = SentenceTransformerTrainer(
-    model=model,
-    args=args,
-    train_dataset=train_dataset,
-    loss=loss,
-    data_collator=collator,
-)
-
-trainer.train()
-```
-
-If the model needs prompts, Router tasks or length limits, pass `prompts`, `router_mapping` and `max_length` to the **collator**. TrainingArguments alone does not configure a custom collator. See the [preprocessing example](docs/api.md#set-prompts-router-tasks-and-length-limits).
-
-For held-out evaluation, use a retrieval `evaluator` instead of reusing this collator with `eval_dataset`. Unknown positive IDs in `eval_dataset` cause an error; see the [evaluation guide](docs/api.md#evaluate-and-reproduce-a-run).
-
-The standard workflow uses random row sampling with both known-positive masks enabled, as shown above. Build counts from the same training split. The masks exclude the anchor's positive and other positives attached to the same query in the batch, including matching IDs in uniform or mined candidates.
-
-The example uses `plugin` so the positive score stays unchanged when known matches are removed from the negative sum. The API still defaults to `yi`. Combining yi with document masking can change what the loss learns, even in a simple model of negative sampling. Plugin also has limits with small batches. Masking can reduce the usable negative count, so tune `num_uniform` on held-out retrieval metrics. See the [design notes](docs/design.md#what-changes-when-positives-are-masked) and the [API guide for other samplers](docs/api.md#choose-a-batch-sampler).
-
-Both loss classes can also be wrapped in [MatryoshkaLoss](docs/api.md#train-at-multiple-embedding-sizes) to train several embedding sizes together.
-
-## Components and objectives
-
-| API | Responsibility |
-| --- | --- |
-| `DocumentFrequency` | Static positive-document counts, with int64 IDs/counts |
-| `MixedNegativeDataCollator` | K distinct corpus samples without replacement and a dict label of IDs/counts/sources |
-| `LogQMultipleNegativesRankingLoss` | Ordinary forward/backward |
-| `CachedLogQMultipleNegativesRankingLoss` | ST GradCache with query-row chunks |
-| `mixed_negative_logq_loss` | Per-row loss from already scaled `(b,C)` scores |
-
-| Variant | Behavior | Scope |
-| --- | --- | --- |
-| `yi` (default) | Correct positives too; auto averages separate source objectives | Empirical iid proposal approximation, not a finite-batch consistency guarantee for the actual collator |
-| `plugin` | Positive weight one; correct negatives by expected counts or inclusion probabilities | An unbiased partition estimate does not imply unbiased finite-sample loss/gradients |
-| `improved` (research) | Stop-gradient form with the same first gradient as plugin | Its non-monotonic scalar loss is unsuitable for early stopping or best-checkpoint selection |
-
-Use `num_uniform=0` for logQ alone, `logq_strength=0` for no correction and `combine="pooled"` for one joint candidate softmax. A plain-MNRL comparison needs **both `logq_strength=0, combine="pooled"` and matching masks**; yi's auto/separate mode is a different objective.
-
-For mined negatives, separate mode gives them an independent uncorrected loss; pooled mode can reduce their relative influence.
-
-See the [API contract](docs/api.md), [design and compatibility](docs/design.md), and [development checks](CONTRIBUTING.md).
-
-## Validation and limits
-
-Automated checks cover the sampling calculations, loss gradients and Sentence Transformers integration. Both ordinary and cached CPU Trainer integration tests run in [CI](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml). These checks use synthetic data; real-data improvements need separate evaluation.
-
-- Verified environment: macOS arm64, Python 3.12.13, ST 6.3.0, PyTorch 2.15.0, Transformers 5.23.0.
-- CPU, single training process, finite map-style datasets. CUDA/MPS, DDP, cross-device gathering, streaming counts and multiple datasets are unsupported or unverified.
-- `yi + inclusion` is rejected; use plugin or improved for inclusion weighting.
-- `mask_same_query=True` is a batch-local known-positive heuristic. Unbiased-estimator checks use False.
-- Mined negative columns are uncorrected heuristic terms, not samples from a known proposal.
-- Exact inclusion calculations can be expensive for large batches; expected counts are the usual starting point.
-
-## Research background
-
-Cosmea builds on the following research. It adapts the sampling and loss calculations to the batches it creates; it does not claim to reproduce the papers’ experiments.
-
-- [Yi et al., 2019 — Sampling-Bias-Corrected Neural Modeling](https://research.google/pubs/sampling-bias-corrected-neural-modeling-for-large-corpus-item-recommendations/)
-- [Yang et al., 2020 — Mixed Negative Sampling](https://research.google/pubs/mixed-negative-sampling-for-learning-two-tower-neural-networks-in-recommendations/)
-- [Ma & Collins, 2018 — Conditional NCE](https://arxiv.org/abs/1809.01812)
-- [Khrylchenko et al., 2025 — Correcting the LogQ Correction](https://arxiv.org/abs/2507.09331) / [author code at the inspected commit](https://github.com/NonameUntitled/logq/tree/f48221cad05612a2558966288e77020e61f3ff01)
-
-## License
-
-Cosmea is licensed under [Apache-2.0](LICENSE). Dependencies retain their own licenses; see [NOTICE](NOTICE.md) for third-party references.
-
-No package release has been made. Hosted check results are available in [GitHub Actions](https://github.com/tkhshtsh0917/cosmea/actions/workflows/ci.yml).
+The project name comes from *Cosmea*, another name for cosmos flowers. See [LICENSE](LICENSE) and [NOTICE](NOTICE.md) for licensing and attribution. Install the development version from GitHub.

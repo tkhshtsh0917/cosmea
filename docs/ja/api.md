@@ -1,8 +1,8 @@
-# APIガイド
+# 学習コードへの組み込み
 
 [English](../api.md) · [README](../../README.ja.md)
 
-まずは[READMEの利用例](../../README.ja.md#手元のデータで使う)を参照してください。このページでは、データの用意の仕方と設定の意味を説明します。
+既存のSentence Transformersの学習コードにCosmeaを組み込む手順です。最初の動作確認は[クイックスタート](../../README.ja.md#クイックスタート)から始めてください。各APIのソースとリファレンスの生成手順は[公開APIの一覧](../reference.md)にあります。
 
 ## 学習ペアと検索対象を用意する
 
@@ -13,8 +13,8 @@
 | 入力 | 用意するもの |
 | --- | --- |
 | 学習dataset | `anchor, positive, query_id, document_id`の順に並んだ列 |
-| `corpus` | 文書のテキスト一覧。クリック履歴のない文書も含める |
-| `corpus_ids` | `corpus`と同じ順番のID一覧 |
+| `corpus_texts` | 文書のテキスト一覧。クリック履歴のない文書も含め、`corpus`に渡す |
+| `corpus_ids` | `corpus_texts`と同じ順番のID一覧 |
 | `DocumentFrequency` | DataLoaderが実際に抽出する学習datasetから数えた頻度 |
 
 コレーターは、複数の学習例をまとめてモデルへ渡す部品です。ID列を取り除いた後の最初の2つのテキスト列をアンカーと正例として読み、後続のテキスト列を負例として扱います。列名はデータセットに合わせられ、学習時の役割は列の順序で決まります。学習に使わない補助列は取り除いてください。`label`、`labels`、`score`、`scores`は内部で使うため、datasetの列名にするとエラーになります。
@@ -24,6 +24,68 @@
 正例IDが`DocumentFrequency`にない場合はエラーになります。コーパスに同じIDが複数あれば最初のテキストを残してまとめ、その後の重複しないID全体から一様に抽出します。
 
 既存のコードでは、`ItemFrequency`と引数名の`item_frequency`、`item_id_column`、`extra_item_id_columns`、`mask_same_item`を引き続き使えます。新しいコードでは、`DocumentFrequency`、`document_frequency`、`document_id_column`、`extra_document_id_columns`、`mask_same_document`を使います。
+
+## Trainerに組み込む
+
+上の表に沿って用意した `train_dataset`、`corpus_texts`、`corpus_ids` を使います。まずはランダムな行抽出、`plugin`、`pooled`、2つの既知正例マスクを組み合わせます。Pythonでデータを作る手順は[クイックスタートのコード](../../examples/quickstart.py)で確認できます。
+
+```python
+from sentence_transformers import (
+    SentenceTransformer,
+    SentenceTransformerTrainer,
+    SentenceTransformerTrainingArguments,
+)
+from sentence_transformers.base.sampler import BatchSamplers
+from cosmea import (
+    DocumentFrequency,
+    MixedNegativeDataCollator,
+    LogQMultipleNegativesRankingLoss,
+)
+
+model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device="cpu")
+# train_dataset の列順: anchor, positive, query_id, document_id
+# corpus_texts と corpus_ids は同じ順番で、同じID体系を使う。
+frequency = DocumentFrequency.from_dataset(train_dataset, document_id_column="document_id")
+
+collator = MixedNegativeDataCollator(
+    preprocess_fn=model.preprocess,
+    document_frequency=frequency,
+    corpus=corpus_texts,
+    corpus_ids=corpus_ids,
+    num_uniform=64,  # コーパス内の異なるIDの数を超えないようにする。
+    query_id_column="query_id",
+    document_id_column="document_id",
+)
+
+loss = LogQMultipleNegativesRankingLoss(
+    model,
+    variant="plugin",
+    combine="pooled",
+    logq_strength=1.0,
+    mask_same_document=True,
+    mask_same_query=True,
+)
+
+args = SentenceTransformerTrainingArguments(
+    output_dir="outputs/run",
+    per_device_train_batch_size=64,
+    batch_sampler=BatchSamplers.BATCH_SAMPLER,
+    use_cpu=True,
+    report_to="none",
+    save_strategy="no",
+)
+
+trainer = SentenceTransformerTrainer(
+    model=model,
+    args=args,
+    train_dataset=train_dataset,
+    loss=loss,
+    data_collator=collator,
+)
+
+trainer.train()
+model.save_pretrained("outputs/run/model")
+```
 
 ## 前処理を設定する
 
@@ -69,7 +131,7 @@ collator = MixedNegativeDataCollator(
 
 ## 主な設定を選ぶ
 
-READMEの標準手順では、ランダムな行抽出と2つの既知正例マスクを使い、`plugin`で出所をまとめて期待出現回数を使います。クラスの既定値は引き続きyiです。`improved`・inclusionは比較研究向けです。`improved`の評価損失でモデルを選ばないでください。
+上の組み込み例では、ランダムな行抽出と2つの既知正例マスクを使い、`plugin`で出所をまとめて期待出現回数を使います。クラスの既定値はyiです。`improved`とinclusionは比較研究向けです。モデルの選択には検索指標を使ってください。
 
 | 設定 | 意味 |
 | --- | --- |
@@ -137,7 +199,7 @@ pluginの一様側の損失は $\log(1+(M/K)^{\lambda_u}S_u/e^{F_p})$ です。$
 
 頻度は実際に抽出する学習splitから数えます。学習に使っていないデータで品質を測る場合は、コーパス全体を検索して指標を計算してください。別の評価splitへ学習頻度を使い回すと、一般に補正する確率がずれます。Trainerの評価テストは、情報が損失まで届くことの確認であり、未知データでの品質評価ではありません。
 
-未知クエリの品質評価には、Trainerへ検索用`evaluator`を渡し、`eval_dataset`は省いてください。`eval_queries`はクエリIDからテキストへの辞書、`eval_relevant_docs`は同じクエリIDから正解の文書ID集合への辞書です。文書IDはコーパスの辞書と揃え、必要ならモデルに合う評価用promptも指定します。
+学習前後のモデルを同じ評価器で比較します。`eval_queries`はクエリIDから本文への辞書、`eval_relevant_docs`は同じクエリIDから正解の文書ID集合への辞書です。評価には学習で使っていないクエリIDと本文を使い、文書IDはコーパスと揃えます。学習時に独自のpromptを使った場合は、評価でも同じ接頭辞を指定します。
 
 ```python
 from sentence_transformers.sentence_transformer.evaluation import InformationRetrievalEvaluator
@@ -148,13 +210,15 @@ evaluator = InformationRetrievalEvaluator(
     relevant_docs=eval_relevant_docs,
     name="held_out",
 )
+
+before = evaluator(model)
+trainer.train()
+after = evaluator(model)
 ```
 
-学習dataset・コレーターと一緒に`evaluator=evaluator`を渡します。`eval_dataset`に学習頻度にない正例IDが含まれると、`Positive ID absent from document_frequency`で停止します。既知IDだけでも、一般に学習頻度は評価側の抽出確率に合いません。コレーターは全コーパス評価器ではありません。早期終了や最良checkpointの選択には、`improved`の損失値ではなく、未知クエリの検索指標を使ってください。
+上の組み込み例にある `trainer.train()` を、この3行に置き換えます。学習中にも測る場合は、Trainerに `evaluator=evaluator` と評価スケジュールを設定します。`eval_dataset` は省いてください。学習用コレーターを評価データに適用すると抽出頻度が合わず、学習頻度にない正例IDがあれば `Positive ID absent from document_frequency` で停止します。早期終了や最良チェックポイントの選択には、学習に使っていないクエリの検索指標を使います。`improved` の損失値は選択に適しません。
 
 DataLoaderの各workerはPyTorchの乱数を元に別々の乱数列を使います。再現には同じ起動条件が必要です。途中checkpointからの完全な乱数復元や、worker数を変えても同じ抽出順になることは保証していません。
-
-対応範囲はSentence Transformers `>=6.3,<6.4`、PyTorch `>=2.6,<3`、NumPy `>=2,<3`です。CPU・1学習プロセスで検証しています。GPU、分散学習、ストリーミングには追加の検証が必要です。[資源と互換性の制限](design.md#資源と互換性の制限)も参照してください。
 
 ## 複数の埋め込み次元で学習する
 

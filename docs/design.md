@@ -10,7 +10,7 @@ Cosmea combines two sources: the other positives in the batch, and documents dra
 
 **logQ correction** adjusts scores according to how candidates were sampled. It requires both sampling information and a loss calculation, so a sampler alone is not enough. The row sampler chooses training examples, the collator adds corpus candidates and counts, and the loss applies the correction.
 
-This corrects how negative examples are drawn. It does not identify documents that users would have clicked if they had been shown something else. Exposure bias in the positive log therefore needs separate treatment.
+The correction concerns how training candidates are drawn. Exposure bias in logged positive feedback requires its own assumptions and data.
 
 ## “How many times” and “at least once” are different
 
@@ -54,7 +54,7 @@ Under ideal independent sampling and a sufficiently expressive model, logQ corre
 
 ## Mined negatives and loss monitoring
 
-In `separate` mode, in-batch, uniform and extra mined candidates form independent objectives. Extra candidates are shared across queries, receive no correction, and use an uncorrected positive. Only objectives with eligible negatives enter the average. A singleton batch with mined negatives therefore remains trainable. This changes the initial development behavior, which grouped mined candidates with in-batch candidates.
+In `separate` mode, in-batch, uniform and extra mined candidates form independent objectives. Extra candidates are shared across queries, receive no correction, and use an uncorrected positive. Only objectives with eligible negatives enter the average. A singleton batch with mined negatives therefore remains trainable.
 
 In `pooled` mode, mined terms keep weight 1 while sampled terms receive $1/q$ weighting at strength 1. With rare documents or a larger training population, mined terms can have much less relative influence. Choose separate mode when you want an independent mined-negative objective; its real-data quality still needs evaluation. If only mined negatives remain after masking a row, pooled yi uses an uncorrected positive for that row. A corrected yi term with eligible sampled negatives and zero positive support remains an error.
 
@@ -158,3 +158,12 @@ $$
 $$
 
 The training classes then average the row losses over the batch. Proposal metadata and masks are fixed with respect to the score gradients.
+
+## Research background
+
+These papers inform Cosmea's design. The library adapts the weights to its own sampling procedure.
+
+- [Yi et al., 2019 — Sampling-Bias-Corrected Neural Modeling](https://research.google/pubs/sampling-bias-corrected-neural-modeling-for-large-corpus-item-recommendations/)
+- [Yang et al., 2020 — Mixed Negative Sampling](https://research.google/pubs/mixed-negative-sampling-for-learning-two-tower-neural-networks-in-recommendations/)
+- [Ma and Collins, 2018 — Conditional NCE](https://arxiv.org/abs/1809.01812)
+- [Khrylchenko et al., 2025 — Correcting the LogQ Correction](https://arxiv.org/abs/2507.09331)

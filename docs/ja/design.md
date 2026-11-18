@@ -158,3 +158,12 @@ $$
 $$
 
 学習用のクラスは、この行別の損失をバッチ全体で平均します。抽出情報やマスクはスコアに依存せず、それらに勾配は流れません。
+
+## 関連研究
+
+Cosmeaは以下を参考に、実装の抽出手順に合わせて補正の重みを計算します。
+
+- [Yi et al., 2019 — Sampling-Bias-Corrected Neural Modeling](https://research.google/pubs/sampling-bias-corrected-neural-modeling-for-large-corpus-item-recommendations/)
+- [Yang et al., 2020 — Mixed Negative Sampling](https://research.google/pubs/mixed-negative-sampling-for-learning-two-tower-neural-networks-in-recommendations/)
+- [Ma and Collins, 2018 — Conditional NCE](https://arxiv.org/abs/1809.01812)
+- [Khrylchenko et al., 2025 — Correcting the LogQ Correction](https://arxiv.org/abs/2507.09331)

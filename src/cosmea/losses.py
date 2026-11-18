@@ -158,12 +158,11 @@ class LogQMultipleNegativesRankingLoss(_LogQConfig, nn.Module):
         model: the SentenceTransformer.
         scale: inverse temperature applied to the similarity (20 = temperature 0.05).
         similarity_fct: pairwise similarity, default cosine.
-        variant: ``"yi"`` (default; iid proposal approximation), ``"plugin"`` or ``"improved"``
-            (confidence-weighted objective; same first gradient as "plugin");
-            see :func:`cosmea.functional.mixed_negative_logq_loss`.
+        variant: `"yi"` (default, independent-draw approximation), `"plugin"` or `"improved"`
+            (confidence-weighted objective with the same first gradient as `"plugin"`).
         logq_strength: default lambda in ``f - lambda * log q``; 0 disables correction.
-        in_batch_logq_strength / uniform_logq_strength: per-source overrides for
-            separate losses. None inherits logq_strength.
+        in_batch_logq_strength: Override for in-batch candidates in separate mode. None inherits `logq_strength`.
+        uniform_logq_strength: Override for uniform candidates in separate mode. None inherits `logq_strength`.
         q_measure: ``"expected_count"`` (duplicates kept) or ``"inclusion"`` (pool de-duplicated).
         combine: ``"separate"`` or ``"pooled"`` softmax over the negative sources; ``"auto"``
             uses "separate" for "yi" and "pooled" otherwise.
@@ -222,10 +221,14 @@ class LogQMultipleNegativesRankingLoss(_LogQConfig, nn.Module):
 
 
 class CachedLogQMultipleNegativesRankingLoss(_LogQConfig, CachedLossMixin, nn.Module):
-    """GradCache version of :class:`LogQMultipleNegativesRankingLoss` for large batches.
+    """GradCache version of `LogQMultipleNegativesRankingLoss` for large batches.
 
     The correction is a constant with respect to the embeddings, so it is compatible with
-    gradient caching; the loss stage is evaluated in chunks of ``mini_batch_size`` rows.
+    gradient caching. It accepts the same loss options as `LogQMultipleNegativesRankingLoss`.
+
+    Args:
+        mini_batch_size: Positive number of query rows per chunk of the cached loss calculation.
+        show_progress_bar: Show progress while replaying the chunks.
     """
 
     def __init__(

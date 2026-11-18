@@ -39,23 +39,30 @@ logger = logging.getLogger(__name__)
 class MixedNegativeDataCollator(SentenceTransformerDataCollator):
     """Collator for (anchor, positive[, extra columns]) datasets with uniform corpus negatives.
 
+    Use keyword arguments, including these inherited preprocessing settings:
+
+    - `preprocess_fn` (required): Pass `model.preprocess`.
+    - `prompts` (optional): A shared prefix or a mapping from text columns to prefixes. Defaults to an empty mapping.
+    - `router_mapping` (optional): Maps text columns to Router task names. Defaults to an empty mapping.
+    - `max_length` (optional): An integer token limit or a mapping from tasks to limits. Defaults to the model limit.
+    - `valid_label_columns` (optional): Names reserved for labels. Defaults to `label`, `labels`, `score` and `scores`.
+
+    Pass these settings directly to the collator. The Trainer does not copy them into a
+    custom collator. Uniform negatives reuse the positive column's preprocessing.
+
     Args:
-        preprocess_fn: ``model.preprocess`` (as for the stock collator).
-        document_frequency: counts of the training positives, ``DocumentFrequency.from_dataset(...)``.
+        document_frequency: Counts of the training positives from `DocumentFrequency.from_dataset`.
             Must be built from the *training* split with the same id convention.
         corpus: texts of the serving corpus to sample uniform negatives from. Should cover
             everything that can be retrieved at serving time, including documents without feedback.
         corpus_ids: optional document ids aligned with ``corpus``; defaults to the hash of each text.
         num_uniform: number K of uniform negatives added to every batch (0 = logQ only).
-        query_id_column / document_id_column: optional dataset columns holding ids for the anchor and
-            the positive. They are removed before tokenization. Without them, ids are text hashes,
-            so two different texts of one document are treated as different documents.
+        query_id_column: Optional ID column for the anchor. If omitted, the query identity is based on text.
+        document_id_column: Optional ID column for the positive. If omitted, different renderings
+            of the same document are treated as different documents.
         uniform_column: name of the appended candidate column.
         extra_document_id_columns: extra text column -> ID column mapping; required for each
             extra column when ``document_id_column`` is set.
-        prompts / router_mapping / max_length: inherited preprocessing settings.
-            Pass them here, not only to TrainingArguments: a custom collator does
-            not inherit the trainer's settings. Uniforms reuse the positive settings.
 
     The first two text columns of the dataset are the anchor and the positive, as for
     ``MultipleNegativesRankingLoss``. Further text columns (e.g. mined hard negatives) are kept as

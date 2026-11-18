@@ -1,8 +1,8 @@
-# API guide
+# Training integration guide
 
 [日本語](ja/api.md) · [README](../README.md)
 
-Start with the [README example](../README.md#use-your-own-data). This guide explains how to prepare your data and what each option changes.
+Use this guide to add Cosmea to an existing Sentence Transformers training script. For a runnable first example, see the [quickstart](../README.md#quickstart). Find source links and the generated reference through the [public API index](reference.md).
 
 ## Prepare pairs and a searchable collection
 
@@ -13,7 +13,7 @@ Prepare the following inputs:
 | Input | What to put in it |
 | --- | --- |
 | Training dataset | Columns in the order `anchor, positive, query_id, document_id` |
-| `corpus` | A list of document texts, including documents without clicks |
+| `corpus_texts` | Document texts, including documents without clicks. Pass this list as `corpus` |
 | `corpus_ids` | IDs in the same order as `corpus` |
 | `DocumentFrequency` | Counts built from the training dataset that the DataLoader actually samples |
 
@@ -24,6 +24,66 @@ Use the same ID for the same document everywhere. IDs may be strings, bytes, or 
 A positive ID missing from `DocumentFrequency` causes an error. Repeated corpus IDs are merged, keeping the first text; sampling is uniform over the remaining distinct IDs.
 
 Existing code can still use `ItemFrequency` and the keywords `item_frequency`, `item_id_column`, `extra_item_id_columns` and `mask_same_item`. Use `DocumentFrequency`, `document_frequency`, `document_id_column`, `extra_document_id_columns` and `mask_same_document` in new code.
+
+## Connect Cosmea to the Trainer
+
+Use the `train_dataset`, `corpus_texts` and `corpus_ids` prepared above. Start with random row sampling, `plugin`, pooled expected counts and both known-positive masks. The [quickstart script](../examples/quickstart.py) shows how to create these inputs in Python.
+
+```python
+from sentence_transformers import (
+    SentenceTransformer,
+    SentenceTransformerTrainer,
+    SentenceTransformerTrainingArguments,
+)
+from sentence_transformers.base.sampler import BatchSamplers
+from cosmea import (
+    DocumentFrequency,
+    MixedNegativeDataCollator,
+    LogQMultipleNegativesRankingLoss,
+)
+
+model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device="cpu")
+frequency = DocumentFrequency.from_dataset(train_dataset, document_id_column="document_id")
+
+collator = MixedNegativeDataCollator(
+    preprocess_fn=model.preprocess,
+    document_frequency=frequency,
+    corpus=corpus_texts,
+    corpus_ids=corpus_ids,
+    num_uniform=64,  # Must not exceed the distinct corpus size.
+    query_id_column="query_id",
+    document_id_column="document_id",
+)
+
+loss = LogQMultipleNegativesRankingLoss(
+    model,
+    variant="plugin",
+    combine="pooled",
+    logq_strength=1.0,
+    mask_same_document=True,
+    mask_same_query=True,
+)
+
+args = SentenceTransformerTrainingArguments(
+    output_dir="outputs/run",
+    per_device_train_batch_size=64,
+    batch_sampler=BatchSamplers.BATCH_SAMPLER,
+    use_cpu=True,
+    report_to="none",
+    save_strategy="no",
+)
+
+trainer = SentenceTransformerTrainer(
+    model=model,
+    args=args,
+    train_dataset=train_dataset,
+    loss=loss,
+    data_collator=collator,
+)
+
+trainer.train()
+model.save_pretrained("outputs/run/model")
+```
 
 ## Set prompts, Router tasks and length limits
 
@@ -69,7 +129,7 @@ Use `combine="separate"` to give mined negatives their own uncorrected objective
 
 ## Choose the main options
 
-Follow the README with `plugin`, pooled expected counts, random row sampling and both known-positive masks. The loss class still defaults to yi. `improved` and inclusion are advanced research controls; `improved` must not be selected by its scalar evaluation loss.
+The standard example above uses `plugin`, pooled expected counts, random row sampling and both known-positive masks. The loss class still defaults to yi. `improved` and inclusion are advanced research controls; `improved` must not be selected by its scalar evaluation loss.
 
 | Option | Meaning |
 | --- | --- |
@@ -137,7 +197,7 @@ For plugin, the uniform term is $\log(1+(M/K)^{\lambda_u}S_u/e^{F_p})$, where $S
 
 Build counts from the sampled training split. For held-out quality, search the full corpus and compute retrieval metrics. Reusing training counts for a different evaluation split generally gives the wrong sampling correction. The Trainer evaluation test checks that metadata reaches the loss; it is not a held-out quality result.
 
-For held-out quality, pass a retrieval `evaluator` to the Trainer and omit `eval_dataset`. `eval_queries` maps query IDs to text; `eval_relevant_docs` maps those IDs to sets of relevant corpus IDs. IDs must match the corpus dictionary. Supply the model's evaluation prompts if needed.
+Use the same evaluator for the initial and fine-tuned models. `eval_queries` maps query IDs to text and `eval_relevant_docs` maps those IDs to sets of relevant corpus IDs. Use query texts and IDs held out of training. If training uses custom prompts, use the same prefixes in evaluation.
 
 ```python
 from sentence_transformers.sentence_transformer.evaluation import InformationRetrievalEvaluator
@@ -148,13 +208,15 @@ evaluator = InformationRetrievalEvaluator(
     relevant_docs=eval_relevant_docs,
     name="held_out",
 )
+
+before = evaluator(model)
+trainer.train()
+after = evaluator(model)
 ```
 
-Pass this as `evaluator=evaluator` alongside the training dataset and collator. An `eval_dataset` containing positive IDs absent from training counts raises `Positive ID absent from document_frequency`; even if all IDs exist, training counts generally give the wrong evaluation proposal. The collator is not a full-corpus evaluator. For early stopping or best-checkpoint selection, use a held-out retrieval metric, not the `improved` scalar loss.
+This replaces the `trainer.train()` call in the integration example above. To evaluate during training, pass `evaluator=evaluator` to the Trainer and set its evaluation schedule. Omit `eval_dataset` so the training collator does not apply training counts to a new split. Unknown positives in that split would cause `Positive ID absent from document_frequency`. For early stopping or best-checkpoint selection, use a held-out retrieval metric. The `improved` scalar loss is unsuitable for these decisions.
 
 Each DataLoader worker gets its own random stream derived from PyTorch's RNG. The same launch conditions are needed for reproducibility. Restoring the exact collator stream from a checkpoint, or keeping identical draws after changing the worker count, is not guaranteed.
-
-The supported ranges are Sentence Transformers `>=6.3,<6.4` and PyTorch `>=2.6,<3`, with NumPy `>=2,<3`. CPU with one training process is verified. GPU, distributed training and streaming datasets need additional validation; see [design](design.md#resource-and-compatibility-limits).
 
 ## Train at multiple embedding sizes
 

@@ -2,11 +2,13 @@
 
 [日本語](README.ja.md)
 
+Start with the [quickstart](../README.md#quickstart) to try training and search on sample data. These examples show how to use your own inputs.
+
 ## Train with your own data
 
-Use [train_from_csv.py](train_from_csv.py). It loads an existing model, reads training pairs and a searchable collection, trains on CPU, and saves the result. It does not contain the model/tokenizer-building code used by the offline check.
+Use [train_from_csv.py](train_from_csv.py). It loads an existing model, reads training pairs and a searchable collection, trains on CPU, and saves the result.
 
-First [install Cosmea with the train extra](../README.md#installation), then copy `train_from_csv.py` into your project. Prepare UTF-8 CSV files with the following columns. UTF-8 files with a BOM work too. The rows below illustrate the format.
+First [install Cosmea with the train extra](../README.md#quickstart), then copy `train_from_csv.py` into your project. Prepare UTF-8 CSV files with the following columns. UTF-8 files with a BOM work too. The rows below illustrate the format.
 
 `train.csv`:
 
@@ -31,18 +33,18 @@ All IDs are read as strings. If a positive ID also appears in the corpus, the te
 
 ```bash
 uv run python train_from_csv.py \
-  --model path/to/local/model \
+  --model sentence-transformers/all-MiniLM-L6-v2 \
   --train train.csv \
   --corpus corpus.csv \
   --output outputs/retriever \
   --uniform 2
 ```
 
-The CSV script follows the README workflow: `plugin` with pooled expected counts, `BatchSamplers.BATCH_SAMPLER`, `mask_same_document=True` and `mask_same_query=True`. The library still defaults to yi when no variant is specified.
+The CSV script follows the [standard integration settings](../docs/api.md#connect-cosmea-to-the-trainer). It uses `plugin` with pooled expected counts, `BatchSamplers.BATCH_SAMPLER`, `mask_same_document=True` and `mask_same_query=True`. The library still defaults to yi when no variant is specified.
 
 `--model` accepts a local Sentence Transformers model directory or a Hugging Face model ID. Using a remote ID may download its files. The uniform count cannot exceed the number of distinct corpus IDs. The trained model is saved to `outputs/retriever/model`; run folders can be selected with `--output`.
 
-This is a training example, not a quality benchmark. Evaluate on separate queries against the full corpus before drawing conclusions about retrieval quality. See the [API guide](../docs/api.md) for the sampling assumptions and [Matryoshka usage](../docs/api.md#train-at-multiple-embedding-sizes) for shorter embeddings.
+See [the quickstart code](quickstart.py) for search with a saved model. To assess quality, [compare the initial and trained models on the same held-out queries](../docs/api.md#evaluate-and-reproduce-a-run).
 
 For a prompt-based model, set `--query-prompt "query: "` and `--document-prompt "passage: "` to the actual prefixes required by the model; these are examples, not universal defaults. `--max-length 256` sets the collator token limit. For Router tasks use the API guide and pass `router_mapping` directly to the collator. TrainingArguments alone does not transfer these settings.
 
@@ -107,8 +109,4 @@ The example uses exact cosine search for small corpora and binary judgments. Unj
 
 By default the script uses the model's `query` and `document` prompts, with an empty prefix when the corresponding prompt is absent. If the checkpoint uses a different key such as `passage` or `corpus`, pass its prefix text with `--document-prompt`. Use `--query-prompt` to override the query prefix. An empty string explicitly disables the corresponding prefix. The same prefixes apply during mining, training and evaluation. The saved model retains its configured defaults, so pass the same overrides when encoding after reload.
 
-## Check the integration without downloads
-
-[train_example.py](train_example.py) creates a tiny random BERT and synthetic data locally. It exercises ordinary and Cached losses and is used by CI. The extra tokenizer/model construction is for that purpose. Setup and execution are documented in [CONTRIBUTING.md](../CONTRIBUTING.md#offline-example-and-optional-experiment).
-
-The optional comparison under `experiments/` measures loss choices in a synthetic world. It is a research tool, not needed to use the library; its command and limitations are also in CONTRIBUTING.
+See the [contributor guide](../CONTRIBUTING.md#offline-example-and-optional-experiment) for the offline integration checks and synthetic experiment.

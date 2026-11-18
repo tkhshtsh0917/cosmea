@@ -2,11 +2,13 @@
 
 [English](README.md)
 
+初めて試す場合は[クイックスタート](../README.ja.md#クイックスタート)から始めてください。ここでは、自分のデータを使う手順を紹介します。
+
 ## 手元のデータで学習する
 
-[train_from_csv.py](train_from_csv.py)を使ってください。既存のモデルを読み込み、学習ペアと検索対象をCSVから受け取り、CPUで学習して保存する例です。オフライン検査用のモデル・tokenizerを自作する処理は含みません。
+[train_from_csv.py](train_from_csv.py)を使ってください。既存のモデルを読み込み、学習ペアと検索対象をCSVから受け取り、CPUで学習して保存する例です。
 
-まず[train extra付きでCosmeaをインストール](../README.ja.md#インストール)し、`train_from_csv.py`をお使いのプロジェクトへコピーします。UTF-8のCSVに次の列を用意してください。BOM付きのUTF-8にも対応しています。以下は入力形式を示す例です。
+まず[train extra付きでCosmeaをインストール](../README.ja.md#クイックスタート)し、`train_from_csv.py`をお使いのプロジェクトへコピーします。UTF-8のCSVに次の列を用意してください。BOM付きのUTF-8にも対応しています。以下は入力形式を示す例です。
 
 `train.csv`：
 
@@ -31,18 +33,18 @@ IDはすべて文字列として読みます。コーパスにも同じ正例ID�
 
 ```bash
 uv run python train_from_csv.py \
-  --model path/to/local/model \
+  --model sentence-transformers/all-MiniLM-L6-v2 \
   --train train.csv \
   --corpus corpus.csv \
   --output outputs/retriever \
   --uniform 2
 ```
 
-CSVスクリプトはREADMEの標準手順に合わせ、`plugin`・pooled・期待出現回数を使います。`BatchSamplers.BATCH_SAMPLER`、`mask_same_document=True`、`mask_same_query=True`を明示しています。APIで損失の種類を省略した場合の既定は引き続きyiです。
+CSVスクリプトは[組み込みガイドの標準設定](../docs/ja/api.md#trainerに組み込む)に合わせ、`plugin`・pooled・期待出現回数を使います。`BatchSamplers.BATCH_SAMPLER`、`mask_same_document=True`、`mask_same_query=True`を明示しています。APIで損失の種類を省略した場合の既定は引き続きyiです。
 
 `--model`には、ローカルのSentence Transformersモデルのディレクトリか、Hugging FaceのモデルIDを指定できます。後者ではモデルをダウンロードする場合があります。一様負例の数はコーパスの重複しないID数以下にしてください。学習したモデルは`outputs/retriever/model`へ保存します。保存するrunの場所は`--output`で選べます。
 
-これは学習手順の例であり、品質ベンチマークではありません。検索品質を判断する前に、別のクエリでコーパス全体を検索して評価してください。抽出条件は[APIガイド](../docs/ja/api.md)、短い埋め込みでも学習する方法は[Matryoshkaの利用](../docs/ja/api.md#複数の埋め込み次元で学習する)を参照してください。
+保存したモデルで検索する処理は[クイックスタートのコード](quickstart.py)で確認できます。品質を測る場合は、[学習に使っていない同じクエリで学習前後を比較](../docs/ja/api.md#評価と再現性)してください。
 
 promptを使うモデルでは、`--query-prompt "query: "`・`--document-prompt "passage: "`へモデルが要求する接頭辞を指定します。ここで示した文字列は例で、全モデルの既定値ではありません。`--max-length 256`はコレーターのトークン上限です。RouterのtaskはAPIガイドに従い、コレーターへ`router_mapping`を直接渡します。TrainingArgumentsだけではこれらの設定は転送されません。
 
@@ -107,8 +109,4 @@ uv run python mine_train_rerank.py \
 
 既定ではモデルの`query`と`document`のpromptを使い、対応するpromptがなければ接頭辞は空になります。モデルが`passage`や`corpus`など別のキーを使う場合は、その接頭辞を`--document-prompt`で指定します。クエリ側は`--query-prompt`で上書きできます。空文字を明示すると、対応する接頭辞を無効にできます。採掘・学習・評価では同じ接頭辞を使います。保存したモデルには元の既定設定が残るため、読み込み直した後も同じ上書きを適用してください。
 
-## ダウンロードなしで接続を確認する
-
-[train_example.py](train_example.py)は、小さなランダム初期化BERTと合成データをローカルで作ります。通常版・Cached版の動作確認とCIに使うため、tokenizerやモデルを自作する処理が含まれています。実行手順は[CONTRIBUTING.ja.md](../CONTRIBUTING.ja.md#オフライン学習例と任意の実験)にあります。
-
-`experiments/`の任意比較は、合成データ上で損失の設定を比べる研究用ツールです。ライブラリの利用には不要です。実行コマンドと制限もCONTRIBUTINGにまとめています。
+開発者向けのオフライン検証・合成実験は[貢献ガイド](../CONTRIBUTING.ja.md#オフライン学習例と任意の実験)を参照してください。

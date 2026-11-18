@@ -10,7 +10,7 @@ HF_HUB_OFFLINE = "1"
 
 [tasks.setup]
 description = "Install the exact development and training environment"
-run = "uv sync --locked --extra train --group dev"
+run = "uv sync --locked --extra train --group dev --group docs"
 
 [tasks.format]
 run = "uv run --frozen --no-sync ruff format src tests examples experiments scripts"
@@ -36,6 +36,10 @@ run = [
 [tasks.build]
 run = "uv run --frozen --no-sync python -m build --no-isolation"
 
+[tasks.docs]
+description = "Build and validate the documentation site"
+run = "uv run --frozen --no-sync mkdocs build --strict"
+
 [tasks.audit]
 run = "uv run --frozen --no-sync python scripts/check_public.py --artifacts"
 
@@ -50,6 +54,7 @@ run = [
   "mise run lint",
   "mise run typecheck",
   "mise run test",
+  "mise run docs",
   "mise run build",
   "mise run secrets",
 ]

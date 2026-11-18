@@ -105,12 +105,17 @@ def candidate_log_q(
 ) -> Tensor:
     """Return log expected multiplicity or log inclusion probability.
 
-    With ``rows``: shape (b, C), conditioned on each row being present; its
-    positive occurrence is removed from the N-1 available training rows.
-    Without ``rows``: shape (C,), suitable for documents distinct from the positive.
-    ``iid_proposal=True`` uses count/N and binomial inclusion instead, for the
-    ranking-NCE approximation. SOURCE_OTHER has log q=0 (uncorrected heuristic).
-    Zero support is represented by -inf, never an invented epsilon probability.
+    Args:
+        label: Sampling metadata from the collator.
+        q_measure: Use `expected_count` for log expected occurrences or `inclusion` for log probability of appearing.
+        per_source: Use weights for each candidate's own source. False combines the in-batch and uniform proposals.
+        rows: Original batch row indices. With indices, condition on the row by removing its positive occurrence
+            from the remaining training rows, except in the iid approximation.
+        iid_proposal: Use count/N and binomial inclusion for the ranking-NCE approximation.
+
+    Returns:
+        Shape `(b, C)` with `b` requested rows, or `(C,)` without `rows`. Mined candidates have log weight 0.
+        Zero proposal support gives negative infinity.
     """
     source = label["cand_source"]
     batch_size = label["query_id"].numel()
@@ -224,11 +229,21 @@ def negative_log_partition(
     iid_proposal: bool = False,
     mask_same_item: bool | None = None,
 ) -> Tensor:
-    """Log corrected negative sum per row; -inf when a row has no negatives.
+    """Return the corrected log sum of eligible negatives for each requested row.
 
-    Duplicates are removed *after* row-specific masking in inclusion mode.
-    iid_proposal is reserved for the approximate Yi-style objective.
-    Nonfinite scores raise ValueError, including entries excluded by masking.
+    Args:
+        scores: Temperature-scaled scores of shape `(b, C)` with `C` candidates.
+        label: Candidate and row metadata from the collator.
+        rows: Original row indices for the first axis of `scores`. Defaults to indices starting at zero.
+        sources: Restrict candidates to the named source codes in `cand_source`. None pools all sources.
+        q_measure: In inclusion mode, keep one occurrence per eligible document after masking.
+        iid_proposal: Use the approximation from the Yi-style objective.
+
+    Returns:
+        Shape `(b,)`. Rows without eligible negatives return negative infinity.
+
+    Raises:
+        ValueError: Scores contain a NaN or infinity, or correction requires a proposal with zero support.
     """
     if rows is None:
         rows = torch.arange(scores.size(0), device=scores.device)
@@ -322,19 +337,29 @@ def mixed_negative_logq_loss(
     mask_same_query: bool = True,
     mask_same_item: bool | None = None,
 ) -> Tensor:
-    """Return (b,) losses for already temperature-scaled scores of shape (b,C).
+    """Return per-query losses for scores that already include the temperature scale.
 
-    yi: all logits corrected, empirical iid proposal approximation.
-    plugin: positive uncorrected, negatives corrected by expected counts/inclusion.
-    improved: stop-gradient confidence-weighted adaptation, same first derivative
-        as plugin, different scalar values and higher-order derivatives.
-    separate: average active in-batch, uniform and uncorrected extra objectives.
-        Each sampled source uses logq_strength unless its source override is set.
-        A zero override skips the proposal calculation for that source.
-        For yi, the uniform correction cancels and only its support is validated.
-    pooled: one softmax; expected counts combine via multiple importance sampling.
-        A yi row with only extra negatives uses an uncorrected softmax.
-    No configuration is a general causal popularity/selection debiasing method.
+    - `yi` corrects positive and negative scores using an empirical iid proposal approximation.
+    - `plugin` corrects negatives by expected counts or inclusion probabilities and keeps the positive unchanged.
+    - `improved` uses a stop-gradient confidence weight. It has the same first derivative as `plugin`
+      and different scalar values and higher-order derivatives.
+    - `separate` averages active in-batch, uniform and uncorrected extra objectives. Each sampled source uses
+      `logq_strength` unless overridden. A zero override skips that proposal calculation. The uniform
+      correction cancels in separate `yi`, which still checks its support.
+    - `pooled` computes one softmax. Expected counts combine via multiple importance sampling. A `yi` row
+      with only extra negatives uses an uncorrected softmax.
+
+    Args:
+        scores: A floating matrix of shape `(b, C)` with `C` candidates.
+        label: Candidate and row metadata from the collator. The initial candidate columns are the
+            positives in original batch order.
+        rows: Original batch row indices for the first axis of `scores`. Defaults to indices starting at zero.
+
+    Returns:
+        Shape `(b,)`, one loss per requested row.
+
+    Raises:
+        ValueError: Scores or row indices do not match the candidate metadata, or the correction is invalid.
     """
     if variant not in ("yi", "plugin", "improved"):
         raise ValueError(f"Unknown variant {variant!r}")

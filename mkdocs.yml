@@ -1,0 +1,73 @@
+site_name: Cosmea
+site_url: https://tkhshtsh0917.github.io/cosmea/
+repo_url: https://github.com/tkhshtsh0917/cosmea
+edit_uri: edit/main/
+site_dir: build/docs
+not_in_nav: AGENTS.md
+
+nav:
+  - English:
+      - Quickstart: README.md
+      - Examples: examples/README.md
+      - Integration guide: docs/api.md
+      - Design: docs/design.md
+      - Contributing: CONTRIBUTING.md
+  - 日本語:
+      - クイックスタート: README.ja.md
+      - 利用例: examples/README.ja.md
+      - 組み込みガイド: docs/ja/api.md
+      - 設計: docs/ja/design.md
+      - 貢献ガイド: CONTRIBUTING.ja.md
+  - API reference: docs/reference.md
+  - Notices: NOTICE.md
+
+hooks:
+  - scripts/docs_files.py
+
+watch:
+  - AGENTS.md
+  - CONTRIBUTING.md
+  - CONTRIBUTING.ja.md
+  - LICENSE
+  - NOTICE.md
+  - README.md
+  - README.ja.md
+  - examples
+  - experiments/diagnostics/stationarity.py
+  - scripts/docs_files.py
+  - scripts/api_reference.md
+  - src/cosmea
+
+plugins:
+  - search:
+      lang: [en, ja]
+      min_search_length: 2
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            allow_inspection: false
+            docstring_style: google
+            heading_level: 2
+            show_root_heading: true
+            show_source: false
+            show_signature_annotations: true
+            members: false
+
+markdown_extensions:
+  - admonition
+  - pymdownx.arithmatex:
+      generic: true
+  - toc:
+      permalink: true
+      slugify: !!python/name:markdown.extensions.toc.slugify_unicode
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-chtml.js
+
+validation:
+  links:
+    not_found: warn
+    anchors: warn
+    unrecognized_links: warn

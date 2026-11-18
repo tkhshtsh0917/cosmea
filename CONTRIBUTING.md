@@ -9,10 +9,10 @@
 | Library | `src/cosmea`; CPU, one training process, finite datasets |
 | Python | Development version in `.python-version`; supported minimum in `pyproject.toml` |
 | Tools | mise pins uv and Betterleaks in `mise.toml` |
-| Dependencies | Runtime ranges and the `train` extra in `pyproject.toml`; development tools in the `dev` dependency group |
+| Dependencies | Runtime ranges and the `train` extra in `pyproject.toml`. Developer and documentation tools use the `dev` and `docs` groups |
 | Reproducibility | `uv.lock` pins the main development and CI environment |
-| Quality | Ruff formatting/lint, mypy, pytest, build, public-content and license audit, Betterleaks |
-| Documentation | English and Japanese README, API, design, examples and this guide |
+| Quality | Ruff formatting/lint, mypy, pytest, strict MkDocs build, package build, public-content and license audit, Betterleaks |
+| Documentation | English and Japanese quickstart, examples, integration and design guides. Shared API reference from docstrings |
 | License | Apache-2.0; LICENSE and NOTICE are included in wheel and sdist |
 
 The package version is defined by `project.version`; the exported `__version__` must agree. Changes to metadata ordering, sampling, masks or defaults require matching API documentation and behavioral tests. The sampling and resource limits are explained in [design](docs/design.md).
@@ -31,7 +31,7 @@ mise run setup
 mise run check
 ```
 
-`setup` installs the locked training dependencies and `dev` group. `check` does not resolve or update dependencies: it uses `uv run --frozen --no-sync` and builds without isolation. For an intentional dependency change, edit `pyproject.toml`, run `mise exec -- uv lock`, review the diff, then run setup and check. `mise run format` applies formatting.
+`setup` installs the locked training dependencies and the `dev` and `docs` groups. `check` uses `uv run --frozen --no-sync` and builds without isolation. For an intentional dependency change, edit `pyproject.toml`, run `mise exec -- uv lock`, review the diff, then run setup and check. `mise run format` applies formatting.
 
 The main CI job runs the same locked setup/check tasks. Separate compatibility jobs explicitly resolve Python 3.11 with Torch 2.6/NumPy 2.0 and Python 3.13 within the declared ranges, record installed versions, and run tests. These jobs do not replace the locked reference environment. Actions are pinned to commit SHAs; update the SHA and version comment together.
 
@@ -72,6 +72,14 @@ Keep responsibilities separate across `src/cosmea`, `examples`, `tests`, `experi
 Fixes need tests that would fail before the fix, preferably with independent mathematical oracles. Cover relevant boundaries without repeating the same property across every parameter combination. Synthetic interface tests do not establish real-data quality. Record the inputs, versions and measurement method for performance claims.
 
 Update English and Japanese docs together. Public files must be sufficient without local notes and must not contain personal paths or private links. Agent-specific operation rules are in [AGENTS.md](AGENTS.md).
+
+## Documentation site
+
+Run `mise run docs` for the strict build used by CI. The rendered site is in `build/docs/`. To preview it locally, run `mise exec -- uv run --frozen --no-sync mkdocs serve`. For a docs-only setup, run `mise exec -- uv sync --locked --only-group docs` before previewing or building.
+
+The site builds from the same Markdown files used on GitHub. Put step-by-step usage in the README and examples, Trainer integration in the integration guide, and formulas and assumptions in the design guide. Update signatures and per-parameter details in the source docstrings. The site appends the generated reference to the [public API index](docs/reference.md). Japanese search may miss terms inside sentences. The Japanese navigation links directly to each guide.
+
+For publication, set **Settings → Pages → Source** to **GitHub Actions**, then run **Documentation Pages** against `main` in the Actions tab. The workflow deploys only the generated site. The regular checks build the docs without deploying. See [GitHub's publishing instructions](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
 
 ## Builds, licensing and secret scanning
 

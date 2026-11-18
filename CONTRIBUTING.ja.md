@@ -9,10 +9,10 @@
 | ライブラリ | `src/cosmea`。CPU・単一学習プロセス・有限dataset |
 | Python | 開発版は`.python-version`、対応下限は`pyproject.toml` |
 | ツール | `mise.toml`でuvとBetterleaksを固定 |
-| 依存関係 | 実行時の範囲と`train` extraは`pyproject.toml`、開発ツールは`dev` dependency group |
+| 依存関係 | 実行時の範囲と`train` extraは`pyproject.toml`、開発・文書ビルド用の依存は`dev`／`docs`グループ |
 | 再現性 | 主な開発・CI環境を`uv.lock`で固定 |
-| 品質検査 | Ruff整形/lint、mypy、pytest、ビルド、公開内容・ライセンス監査、Betterleaks |
-| 文書 | README・API・設計・examples・このガイドを日英で用意 |
+| 品質検査 | Ruff整形/lint、mypy、pytest、MkDocsの厳格ビルド、配布物ビルド、公開内容・ライセンス監査、Betterleaks |
+| 文書 | 日英のクイックスタート、利用例、組み込みガイド、設計ガイド。docstringから共通のAPIリファレンスを生成 |
 | ライセンス | Apache-2.0。LICENSEとNOTICEをwheel／sdistへ収録 |
 
 package versionの正本は`project.version`で、公開`__version__`も一致させる。metadataの順序・抽出方法・マスク・既定値を変える場合は、API文書と振る舞いのテストを更新する。標本設計・資源の制限は[設計](docs/ja/design.md)を参照。
@@ -31,7 +31,7 @@ mise run setup
 mise run check
 ```
 
-`setup`は固定した学習依存と`dev` groupを導入する。`check`は`uv run --frozen --no-sync`と非隔離ビルドを使い、依存を解決・更新しない。意図的な依存変更では`pyproject.toml`を編集し、`mise exec -- uv lock`の差分を確認してsetup・checkを実行する。整形の適用は`mise run format`。
+`setup` は固定した学習依存と `dev`、`docs` グループを導入する。`check` は `uv run --frozen --no-sync` と非隔離ビルドを使う。依存を変更する場合は `pyproject.toml` を編集し、`mise exec -- uv lock` を実行してから、差分を確認してsetupとcheckを実行する。整形には `mise run format` を使う。
 
 主なCI jobは同じ固定版のsetup/checkを実行する。互換性jobではPython 3.11とTorch 2.6／NumPy 2.0、Python 3.13と宣言範囲内の依存を明示的に解決し、導入版を記録してテストする。これらは固定した基準環境の代わりではない。Actionsはcommit SHAで固定し、更新時はSHAと版のコメントを一緒に変える。
 
@@ -72,6 +72,14 @@ mise exec -- uv run --frozen --no-sync python experiments/diagnostics/stationari
 修正には、修正前に失敗するテストを用意し、可能なら独立した数式のoracleを使う。必要な境界を検証し、同じ性質をすべての設定の組合せで繰り返さない。合成データの接続検査は実データの品質を保証しない。性能の主張には入力・版・測定方法を記録する。
 
 日英文書を同時に更新する。公開資料はローカルノートなしで完結させ、個人パス・非公開リンクを含めない。エージェント固有の操作規則は[AGENTS.md](AGENTS.md)に置く。
+
+## ドキュメントサイト
+
+`mise run docs` でCIと同じ厳格モードのビルドを実行する。生成先は `build/docs/`。手元で表示を確認するには `mise exec -- uv run --frozen --no-sync mkdocs serve` を実行する。文書だけを編集する環境では、先に `mise exec -- uv sync --locked --only-group docs` を実行する。
+
+サイトとGitHubは同じMarkdownを使う。手順はREADMEと利用例、Trainerへの接続は組み込みガイド、数式と前提は設計ガイドに記載する。引数や戻り値の詳細はソースのdocstringを更新する。文書サイトでは[公開APIの一覧](docs/reference.md)に、生成したリファレンスを追加する。日本語のサイト内検索は文中の語を拾えないことがある。日本語メニューから各ガイドを開ける。
+
+公開するには、GitHubの **Settings → Pages → Source** で **GitHub Actions** を選び、Actionsタブから `main` を対象に **Documentation Pages** を実行する。このワークフローは生成した文書サイトを配信する。通常のCIでは文書のビルドまでを確認する。[GitHubの公開手順](https://docs.github.com/ja/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)。
 
 ## ビルド・ライセンス・秘密情報の検査
 
