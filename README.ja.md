@@ -24,7 +24,7 @@ uvは取得したGitコミットをお使いのプロジェクトの`uv.lock`へ
 
 ## 手元のデータで使う
 
-手元のデータを読み込んで学習する完全なスクリプトは、[CSV学習例](examples/README.ja.md)を参照してください。
+手元のデータを使う場合は、[CSV学習例](examples/README.ja.md#手元のデータで学習する)や[難例採掘から再ランキングまでの例](examples/README.ja.md#難例採掘から再ランキングまで)を参照してください。
 
 `train_dataset`には`anchor, positive, query_id, document_id`の順に列を持つ学習データを用意します。`anchor`はクエリのテキスト、`positive`は対応する文書のテキストです。`corpus_texts`は検索対象のテキスト一覧、`corpus_ids`は同じ順番のID一覧です。IDの付け方と追加の負例列は[APIガイド](docs/ja/api.md)で説明しています。
 

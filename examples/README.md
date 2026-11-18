@@ -6,7 +6,7 @@
 
 Use [train_from_csv.py](train_from_csv.py). It loads an existing model, reads training pairs and a searchable collection, trains on CPU, and saves the result. It does not contain the model/tokenizer-building code used by the offline check.
 
-First [install Cosmea with the train extra](../README.md#installation), then copy `train_from_csv.py` into your project. Prepare UTF-8 CSV files with the following columns. The rows below illustrate the format; they are not a useful training dataset on their own.
+First [install Cosmea with the train extra](../README.md#installation), then copy `train_from_csv.py` into your project. Prepare UTF-8 CSV files with the following columns. UTF-8 files with a BOM work too. The rows below illustrate the format.
 
 `train.csv`:
 
@@ -47,6 +47,65 @@ This is a training example, not a quality benchmark. Evaluate on separate querie
 For a prompt-based model, set `--query-prompt "query: "` and `--document-prompt "passage: "` to the actual prefixes required by the model; these are examples, not universal defaults. `--max-length 256` sets the collator token limit. For Router tasks use the API guide and pass `router_mapping` directly to the collator. TrainingArguments alone does not transfer these settings.
 
 The prompt flags configure training preprocessing; they do not rewrite the saved model's default prompts. Apply the same query/document prefixes when encoding after reload.
+
+## Mine hard negatives, train, and rerank
+
+[mine_train_rerank.py](mine_train_rerank.py) runs the full pipeline on CPU. Install the train extra as above and keep this script next to [train_from_csv.py](train_from_csv.py), which supplies the CSV reader. Pass an existing SentenceTransformer and a pretrained single-score CrossEncoder. Both arguments accept a local model directory or a Hugging Face model ID.
+
+Use the same `corpus.csv` format as above, with a unique string ID per document. Here `train.csv` and `eval.csv` both use `query_id,query,document_id`, one known relevant document per row. Within each file, use one ID per exact query text and one text per ID. Add more rows with the same ID and text for multiple relevant documents. Training and evaluation queries must have distinct IDs and distinct texts. Every `document_id` must refer to a row in `corpus.csv`. For a small smoke run, use the corpus above and these files.
+
+`train.csv`:
+
+```csv
+query_id,query,document_id
+q1,python list operations,p1
+q2,how to join SQL tables,p2
+```
+
+`eval.csv`:
+
+```csv
+query_id,query,document_id
+q3,flower gardening,p3
+```
+
+To inspect the mined negatives before training, run the mining step on its own.
+
+```bash
+uv run python mine_train_rerank.py \
+  --model sentence-transformers/all-MiniLM-L6-v2 \
+  --train train.csv \
+  --corpus corpus.csv \
+  --output outputs/two-stage-preview \
+  --mine-only
+```
+
+Check the IDs in `outputs/two-stage-preview/mined.csv`. If a negative is actually relevant, add its ID as a known positive in `train.csv`. When you run the full pipeline, use the same mining inputs and settings. It mines again from the input CSVs, so make any judgment edits in `train.csv`. Use a fresh output directory for each run.
+
+```bash
+uv run python mine_train_rerank.py \
+  --model sentence-transformers/all-MiniLM-L6-v2 \
+  --reranker cross-encoder/ms-marco-MiniLM-L6-v2 \
+  --train train.csv \
+  --eval eval.csv \
+  --corpus corpus.csv \
+  --output outputs/two-stage \
+  --uniform 1 \
+  --candidates 2 \
+  --k 1
+```
+
+1. **Mine.** Use the initial retriever to pick the closest eligible corpus document for each training query. Exclude all of that query's known positives and their exact-text copies. An unjudged near match can still be relevant; review the mined IDs before treating them as reliable negatives.
+2. **Train.** Use Cosmea with random row batches and `plugin` / `separate`: correct in-batch and uniform negatives, and give mined negatives a separate uncorrected term. The mined columns are shared across the batch, so mining-time exclusions do not protect positives for every *other* query. Cosmea's known-positive masks at training time are batch-local.
+3. **Evaluate.** Search the full corpus with the trained retriever. Reorder its top `--candidates` using the fixed CrossEncoder. Never add missed positives. Compare mean nDCG@k, Recall@k and MRR@k at the same `--k`, with all known relevant IDs as the reference. Candidate recall is the fraction of relevant IDs the first stage retrieved, averaged across queries.
+
+The script saves `mined.csv` with the training query, positive and negative IDs before training starts. The full run also saves `model/`, `metrics.json`, and `rankings.jsonl`. Both rankings use the trained retriever's candidates. The `before` ranking uses cosine similarity, and the `after` ranking uses CrossEncoder logits. Use ranks and metrics to compare the two stages.
+
+Learning masks and ranking metrics use document IDs. Identical text under different IDs can still act as a negative during training or receive different relevance credit in evaluation. If the IDs refer to the same document, deduplicate the corpus and update the judgments before running the example. Cosine ties follow corpus order. CrossEncoder ties keep the candidate order from the retriever.
+
+The example uses exact cosine search for small corpora and binary judgments. Unjudged documents receive no relevance credit. Use a representative held-out set to assess quality. The sample data only checks that the workflow runs.
+
+By default the script uses the model's `query` and `document` prompts, with an empty prefix when the corresponding prompt is absent. If the checkpoint uses a different key such as `passage` or `corpus`, pass its prefix text with `--document-prompt`. Use `--query-prompt` to override the query prefix. An empty string explicitly disables the corresponding prefix. The same prefixes apply during mining, training and evaluation. The saved model retains its configured defaults, so pass the same overrides when encoding after reload.
 
 ## Check the integration without downloads
 

@@ -20,9 +20,11 @@ from cosmea import DocumentFrequency, LogQMultipleNegativesRankingLoss, MixedNeg
 
 def read_rows(path: Path, columns: list[str], aliases: dict[str, str]) -> list[dict[str, str]]:
     """Read required columns in model-input order, preserving all IDs as strings."""
-    with path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle, strict=True)
         headers = reader.fieldnames or []
+        if len(headers) != len(set(headers)):
+            raise ValueError(f"{path.name} has duplicate column names.")
         source_columns = {column: column if column in headers else aliases.get(column, column) for column in columns}
         if not set(source_columns.values()).issubset(headers):
             raise ValueError(f"{path.name} must contain columns {columns}")
@@ -61,8 +63,12 @@ def main() -> None:
         parser.error("--max-length must be positive")
 
     # 1. Load matching query and document pairs and the collection we want to search.
-    dataset = Dataset.from_list(read_training_rows(args.train))
-    corpus = read_rows(args.corpus, ["document_id", "text"], aliases={"document_id": "item_id"})
+    try:
+        rows = read_training_rows(args.train)
+        corpus = read_rows(args.corpus, ["document_id", "text"], aliases={"document_id": "item_id"})
+    except (ValueError, OSError, csv.Error) as error:
+        parser.error(str(error))
+    dataset = Dataset.from_list(rows)
     model = SentenceTransformer(args.model, device="cpu")
 
     # 2. Count positives and add uniform negatives to each batch.

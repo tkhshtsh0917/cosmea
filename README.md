@@ -24,7 +24,7 @@ For contributing, running the offline example, or building the package, see [CON
 
 ## Use your own data
 
-For a complete script that reads your training data, see the [CSV example](examples/README.md).
+For complete scripts, see the [CSV training example](examples/README.md#train-with-your-own-data) or [mine, train, and rerank](examples/README.md#mine-hard-negatives-train-and-rerank).
 
 Prepare a model, a training dataset with ordered columns `anchor, positive, query_id, document_id`, and aligned corpus text/ID lists. The anchor contains the query text and the positive contains the matching document text.
 
