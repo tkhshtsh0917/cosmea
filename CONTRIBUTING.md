@@ -79,7 +79,9 @@ Update English and Japanese docs together. Public files must be sufficient witho
 
 Run `mise run docs` for the strict build used by CI. The rendered site is in `build/docs/`. To preview it locally, run `mise exec -- uv run --frozen --no-sync mkdocs serve`. For a docs-only setup, run `mise exec -- uv sync --locked --only-group docs` before previewing or building.
 
-The site builds from the same Markdown files used on GitHub. Put step-by-step usage in the README and examples, Trainer integration in the integration guide, and formulas and assumptions in the design guide. Update signatures and per-parameter details in the source docstrings. The site appends the generated reference to the [public API index](docs/reference.md). Japanese search may miss terms inside sentences. The Japanese navigation links directly to each guide.
+The site builds from the same Markdown files used on GitHub. Put step-by-step usage in the README and examples, Trainer integration in the integration guide, and formulas and assumptions in the design guide. Update signatures and per-parameter details in the source docstrings. The site appends the generated reference to the [public API index](docs/reference.md). Japanese search may miss terms inside sentences.
+
+The language selector opens the matching page when both versions exist, or the selected language's quickstart from a shared page such as the API reference. When adding a guide, list both versions in `mkdocs.yml`. Use a `.ja.md` suffix alongside files outside `docs/`, or put the translation under `docs/ja/` with the same relative path as the English page.
 
 For publication, set **Settings → Pages → Source** to **GitHub Actions**, then run **Documentation Pages** against `main` in the Actions tab. The workflow deploys only the generated site. The regular checks build the docs without deploying. See [GitHub's publishing instructions](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
 

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block site_name %}
+<a class="navbar-brand" href="{{ language_home.url|url }}">{{ config.site_name }}</a>
+<div class="dropdown language-picker">
+    <button type="button" id="language-picker" class="nav-link dropdown-toggle"
+            data-bs-toggle="dropdown" aria-controls="language-options" aria-expanded="false">
+        <span class="visually-hidden">{{ '表示言語' if language == 'ja' else 'Language' }}: </span>
+        <i class="fa-solid fa-globe" aria-hidden="true"></i> {{ language_label }}
+    </button>
+    <ul id="language-options" class="dropdown-menu dropdown-menu-end" aria-labelledby="language-picker">
+        {% for code, label, destination in language_choices %}
+        <li>
+            <a href="{{ destination|url }}" lang="{{ code }}" hreflang="{{ code }}"
+               class="dropdown-item{% if code == language %} active{% endif %}"
+               {% if code == language %}aria-current="true"{% endif %}>{{ label }}</a>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endblock %}
+
+{% block site_nav %}
+{% set guides = language_home.parent %}
+<ul class="nav navbar-nav">
+    <li class="nav-item dropdown">
+        <button type="button" class="nav-link dropdown-toggle{% if guides.active %} active{% endif %}"
+                data-bs-toggle="dropdown" aria-expanded="false">{{ 'ガイド' if language == 'ja' else 'Guides' }}</button>
+        <ul class="dropdown-menu">
+            {% for nav_item in guides.children %}
+                {% include "nav-sub.html" %}
+            {% endfor %}
+        </ul>
+    </li>
+    {% for nav_item in nav if not nav_item.children %}
+    <li class="nav-item">
+        <a href="{{ nav_item.url|url }}" lang="en" hreflang="en"
+           class="nav-link{% if nav_item.active %} active{% endif %}"
+           {% if nav_item.active %}aria-current="page"{% endif %}>{{ nav_item.title }}</a>
+    </li>
+    {% endfor %}
+</ul>
+{% endblock %}
+
+{% block search_button %}
+{% if 'search' in config.plugins %}
+<li class="nav-item">
+    <a href="#" class="nav-link" data-bs-toggle="modal" data-bs-target="#mkdocs_search_modal">
+        <i class="fa fa-search" aria-hidden="true"></i> {{ '検索' if language == 'ja' else 'Search' }}
+    </a>
+</li>
+{% endif %}
+{% endblock %}
+
+{% block next_prev %}
+{% for rel, neighbor, label in (
+    ('prev', page.previous_page, '前へ' if language == 'ja' else 'Previous'),
+    ('next', page.next_page, '次へ' if language == 'ja' else 'Next'),
+) if page and neighbor and neighbor.parent == page.parent %}
+<li class="nav-item">
+    <a rel="{{ rel }}" href="{{ neighbor.url|url }}" class="nav-link">{{ label }}</a>
+</li>
+{% endfor %}
+{% endblock %}

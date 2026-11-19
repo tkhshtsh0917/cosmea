@@ -79,7 +79,9 @@ mise exec -- uv run --frozen --no-sync python experiments/diagnostics/stationari
 
 `mise run docs` でCIと同じ厳格モードのビルドを実行する。生成先は `build/docs/`。手元で表示を確認するには `mise exec -- uv run --frozen --no-sync mkdocs serve` を実行する。文書だけを編集する環境では、先に `mise exec -- uv sync --locked --only-group docs` を実行する。
 
-サイトとGitHubは同じMarkdownを使う。手順はREADMEと利用例、Trainerへの接続は組み込みガイド、数式と前提は設計ガイドに記載する。引数や戻り値の詳細はソースのdocstringを更新する。文書サイトでは[公開APIの一覧](docs/reference.md)に、生成したリファレンスを追加する。日本語のサイト内検索は文中の語を拾えないことがある。日本語メニューから各ガイドを開ける。
+サイトとGitHubは同じMarkdownを使う。手順はREADMEと利用例、Trainerへの接続は組み込みガイド、数式と前提は設計ガイドに記載する。引数や戻り値の詳細はソースのdocstringを更新する。文書サイトでは[公開APIの一覧](docs/reference.md)に、生成したリファレンスを追加する。日本語のサイト内検索は文中の語を拾えないことがある。
+
+言語を切り替えると同じページの翻訳版に移動する。APIリファレンスなどの共通ページからは、選んだ言語のクイックスタートに移動する。ガイドを追加するときは、日英両方を `mkdocs.yml` に登録する。`docs/` 外では英語版と同じ場所に `.ja.md` で終わるファイルを置き、`docs/` 内では英語版と同じ相対パスで `docs/ja/` に翻訳版を置く。
 
 公開するには、GitHubの **Settings → Pages → Source** で **GitHub Actions** を選び、Actionsタブから `main` を対象に **Documentation Pages** を実行する。このワークフローは生成した文書サイトを配信する。通常のCIでは文書のビルドまでを確認する。[GitHubの公開手順](https://docs.github.com/ja/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)。
 

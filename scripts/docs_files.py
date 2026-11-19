@@ -8,6 +8,10 @@ from mkdocs.structure.files import File, Files
 from mkdocs.structure.pages import Page
 
 ROOT = Path(__file__).resolve().parents[1]
+LANGUAGES = (
+    ("en", "English", "README.md"),
+    ("ja", "日本語", "README.ja.md"),
+)
 
 
 @event_priority(100)
@@ -43,9 +47,54 @@ def on_page_markdown(markdown: str, page: Page, config: MkDocsConfig, files: Fil
     return markdown
 
 
+def language_of(uri: str) -> str:
+    """Recognize Japanese Markdown in repository paths."""
+    return "ja" if uri.endswith(".ja.md") or uri.startswith("docs/ja/") else "en"
+
+
+def translated_uri(uri: str, language: str) -> str:
+    """Find the peer using repository naming conventions for translations."""
+    if language == language_of(uri):
+        return uri
+    if language == "en":
+        if uri.startswith("docs/ja/"):
+            return uri.replace("docs/ja/", "docs/", 1)
+        return uri.removesuffix(".ja.md") + ".md"
+    if uri.startswith("docs/"):
+        return uri.replace("docs/", "docs/ja/", 1)
+    return uri.removesuffix(".md") + ".ja.md"
+
+
+def language_context(pages: list[File], uri: str) -> dict:
+    """Use the matching page if available and the localized quickstart otherwise."""
+    current = language_of(uri)
+    files = {file.src_uri: file for file in pages}
+    _, label, home_uri = next(locale for locale in LANGUAGES if locale[0] == current)
+    return {
+        "language": current,
+        "language_label": label,
+        "language_home": files[home_uri].page,
+        "language_choices": [
+            (code, label, files.get(translated_uri(uri, code), files[home_uri]).url)
+            for code, label, home_uri in LANGUAGES
+        ],
+    }
+
+
+def on_page_context(context: dict, page: Page, config: MkDocsConfig, nav) -> dict:
+    """Set language links for the documentation header."""
+    return {**context, **language_context(context["pages"], page.file.src_uri)}
+
+
+def on_template_context(context: dict, template_name: str, config: MkDocsConfig) -> dict:
+    """Keep language selection available when GitHub Pages serves a 404."""
+    if template_name == "404.html":
+        return {**context, **language_context(context["pages"], "README.md")}
+    return context
+
+
 def on_post_page(output: str, page: Page, config: MkDocsConfig) -> str:
     """Declare the primary language for Japanese pages of the default theme."""
-    uri = page.file.src_uri
-    if uri.endswith(".ja.md") or uri.startswith("docs/ja/"):
+    if language_of(page.file.src_uri) == "ja":
         return output.replace('<html lang="en"', '<html lang="ja"', 1)
     return output
