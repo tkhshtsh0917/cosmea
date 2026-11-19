@@ -66,7 +66,7 @@ In `pooled` mode, mined terms keep weight 1 while sampled terms receive $1/q$ we
 
 To compare against ordinary pooled MNRL, use `logq_strength=0` and `combine="pooled"`, and match the candidate pool and masks. Setting the correction strength to zero alone does not change separate losses into one pooled loss.
 
-For quality evaluation, use training-only counts, held-out queries and the full corpus. With time-dependent logs, split by time. Report retrieval quality such as Recall/NDCG, results for popular and less popular documents, coverage and concentration. Repeat across seeds and include uncertainty estimates. Synthetic checks verify calculations and interfaces; real-data improvement is unverified.
+For quality evaluation, use training-only counts, held-out queries and the full corpus. With time-dependent logs, split by time. Report retrieval quality such as Recall/NDCG, results for popular and less popular documents, coverage and concentration. Repeat across seeds and include uncertainty estimates. Synthetic checks verify calculations and interfaces. For a measured comparison on one real retrieval dataset, see the [SciFact benchmark](benchmark.md).
 
 The optional synthetic experiment is described in [CONTRIBUTING.md](../CONTRIBUTING.md#offline-example-and-optional-experiment). Its head is the top $\lceil 0.1M\rceil$ documents by popularity, with ties resolved by original document order; the tail is the remainder. At least two documents are required. Top-k uses $\min(k,M)$ slots, including the denominator of unseen-document share. Invalid settings that give no training steps or too many uniform samples are rejected.
 

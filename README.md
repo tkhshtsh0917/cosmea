@@ -2,9 +2,57 @@
 
 [日本語](README.ja.md)
 
-Cosmea adds two tools for fine-tuning a Sentence Transformers model for search. **Mixed Negative Sampling** adds comparison documents drawn from the searchable corpus, including documents without clicks. **logQ correction** adjusts the training loss for differences in how often documents are sampled.
+When a few documents receive most of the clicks, they can appear as negatives across many training batches. Searchable documents with no clicks may never appear in those batches. Cosmea is a Python library for fine-tuning Sentence Transformers search models with this kind of uneven feedback.
 
-Cosmea is an Apache-2.0 development project. The examples run on CPU, and the [design guide](docs/design.md#resource-and-compatibility-limits) covers the supported setup. The tests verify the loss and training integration. Retrieval gains on real data still need to be measured.
+Cosmea is most relevant when training positives are concentrated in a small part of your searchable collection. If positive-document counts are already similar, there is less frequency imbalance for logQ to correct among those documents. Sampling from the full collection can still bring in documents missing from the training pairs.
+
+## What changes from standard MNRL
+
+For each query in a batch of positive query–document pairs, standard Multiple Negatives Ranking Loss (MNRL) uses the documents from other rows as negatives. Sentence Transformers recommends `NO_DUPLICATES` for this setup. See the [Sentence Transformers loss reference](https://sbert.net/docs/package_reference/sentence_transformer/losses.html#sentence_transformers.sentence_transformer.losses.MultipleNegativesRankingLoss).
+
+Cosmea's recommended setup samples training rows at random. **Mixed Negative Sampling (MNS)** adds uniformly sampled documents from the full searchable collection to the in-batch candidates. **logQ correction** adjusts the loss using how often those candidates are expected to be sampled. The loss excludes known positives in the batch from the negatives. See [batch sampling and logQ](docs/api.md#choose-a-batch-sampler).
+
+Use the `model`, training arguments `args`, and `train_dataset` from your Trainer script. In this example, `train_dataset` has exactly two text columns, `anchor` followed by `positive`. Supply the search collection as `corpus_texts` with at least four distinct document texts. Use the same text for a document in both inputs.
+
+```python
+from sentence_transformers.base.sampler import BatchSamplers
+
+from cosmea import DocumentFrequency, LogQMultipleNegativesRankingLoss, MixedNegativeDataCollator
+
+args.batch_sampler = BatchSamplers.BATCH_SAMPLER
+
+collator = MixedNegativeDataCollator(
+    preprocess_fn=model.preprocess,
+    document_frequency=DocumentFrequency.from_dataset(train_dataset),
+    corpus=corpus_texts,
+    num_uniform=4,
+)
+
+loss = LogQMultipleNegativesRankingLoss(model, variant="plugin")
+```
+
+Pass `data_collator=collator` and `loss=loss` when creating the Trainer. If your model needs prompts, set `prompts` on the collator. For the full setup, explicit IDs, and how to use `NO_DUPLICATES` with Cosmea, see the [integration guide](docs/api.md).
+
+## SciFact results
+
+The CPU benchmark used the same `all-MiniLM-L6-v2` checkpoint and evaluated all conditions on the same 300 held-out queries. Each fine-tune used 256 training pairs per run, matched across methods. nDCG@10 measures how well the top 10 results rank relevant documents. Higher is better.
+
+| nDCG@10 | Initial model | Standard MNRL | Cosmea |
+| --- | ---: | ---: | ---: |
+| Fixed pairs, varied training seed | 0.6239 | 0.6290 | 0.6334 |
+| Fixed training seed, varied pairs | 0.6239 | 0.6279 | 0.6327 |
+
+The fine-tuned scores are means over five runs per row. When the training pairs varied, Cosmea's difference from standard MNRL ranged from −0.0077 to +0.0170. On the configuration timed repeatedly, median training time was 8.82 s for Cosmea and 4.89 s for standard MNRL, about 1.8× as long with 16 additional documents sampled per batch. See the [SciFact benchmark](docs/benchmark.md) for the split, timing protocol, and comparison with logQ disabled.
+
+## CPU and GPU validation
+
+| Training setup | Project validation |
+| --- | --- |
+| CPU, one training process | Verified by integration tests. The examples run on CPU. |
+| Single GPU (CUDA or Apple MPS) | End-to-end training has not been verified. |
+| Distributed or mixed-precision training | End-to-end training has not been verified. |
+
+See the [design guide](docs/design.md#resource-and-compatibility-limits) for supported dependency versions and resource limits.
 
 ## Quickstart
 
@@ -38,4 +86,4 @@ To use an existing local Sentence Transformers model instead of downloading one,
 - [Design](docs/design.md) explains the correction, sampling assumptions, loss variants and their limits.
 - [Contributing](CONTRIBUTING.md) covers setup, checks and documentation builds.
 
-The project name comes from *Cosmea*, another name for cosmos flowers. See [LICENSE](LICENSE) and [NOTICE](NOTICE.md) for licensing and attribution. Install the development version from GitHub.
+Cosmea is an Apache-2.0 development project. The project name comes from *Cosmea*, another name for cosmos flowers. See [LICENSE](LICENSE) and [NOTICE](NOTICE.md) for licensing and attribution.

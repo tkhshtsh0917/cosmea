@@ -2,9 +2,57 @@
 
 [English](README.md)
 
-Cosmea（コスメア）は、Sentence Transformersで検索モデルをファインチューニングするためのPythonライブラリです。**Mixed Negative Sampling（MNS）** で、クリック履歴のない文書も含め、検索対象の文書全体から学習用の比較候補を追加します。**logQ補正** では、文書が学習候補に選ばれやすい度合いに応じて、損失の計算を調整します。
+クリックが一部の文書に集中すると、それらの文書は学習バッチで負例として現れやすくなります。検索対象に含まれていても、クリックされていない文書はバッチに一度も現れないことがあります。Cosmea（コスメア）は、このようにフィードバックが偏ったデータで、Sentence Transformersの検索モデルをファインチューニングするためのPythonライブラリです。
 
-Apache-2.0の開発版です。利用例はCPUで動作します。対応範囲は[設計ガイド](docs/ja/design.md#資源と互換性の制限)を参照してください。損失の計算と学習への接続はテストで検証しており、実データでの検索品質への効果は未検証です。
+特に、検索対象の一部に学習の正例が集中している場合に向いています。正例として現れる回数が文書間でほぼ同じなら、それらの文書の間でlogQが補正する頻度の偏りは小さくなります。検索対象全体から抽出すれば、学習ペアに含まれない文書も比較候補に加えられます。
+
+## 標準MNRLとの違い
+
+クエリと正例文書のペアで学習するとき、標準のMultiple Negatives Ranking Loss（MNRL）は、同じバッチの別の行にある正例文書を負例に使います。Sentence Transformersは、この使い方で `NO_DUPLICATES` を推奨しています。詳細は[Sentence Transformersの損失リファレンス](https://sbert.net/docs/package_reference/sentence_transformer/losses.html#sentence_transformers.sentence_transformer.losses.MultipleNegativesRankingLoss)を参照してください。
+
+Cosmeaの推奨構成では、学習行をランダムに抽出します。**Mixed Negative Sampling（MNS）** で検索対象全体から一様に抽出した文書をバッチ内の候補に加え、**logQ補正** で各候補が選ばれやすい度合いに応じて損失を調整します。同じクエリの既知の正例がバッチに含まれる場合は、マスクで負例から除きます。詳しくは[バッチサンプラーの選び方](docs/ja/api.md#バッチサンプラーを選ぶ)を参照してください。
+
+既存のTrainerスクリプトで用意した `model`、学習引数 `args`、`train_dataset` を使います。この例の `train_dataset` は、`anchor`、`positive` の順に並ぶテキスト2列だけで構成します。検索対象は、異なる文書テキストを4件以上含む `corpus_texts` として渡します。同じ文書には、学習ペアと検索対象で同じテキストを使ってください。
+
+```python
+from sentence_transformers.base.sampler import BatchSamplers
+
+from cosmea import DocumentFrequency, LogQMultipleNegativesRankingLoss, MixedNegativeDataCollator
+
+args.batch_sampler = BatchSamplers.BATCH_SAMPLER
+
+collator = MixedNegativeDataCollator(
+    preprocess_fn=model.preprocess,
+    document_frequency=DocumentFrequency.from_dataset(train_dataset),
+    corpus=corpus_texts,
+    num_uniform=4,
+)
+
+loss = LogQMultipleNegativesRankingLoss(model, variant="plugin")
+```
+
+Trainerを作成するときに `data_collator=collator` と `loss=loss` を渡します。モデルにプロンプトが必要な場合は、コレーターの `prompts` に設定してください。Trainer全体の設定、明示的なIDの使い方、`NO_DUPLICATES` と併用する場合の手順は[組み込みガイド](docs/ja/api.md)を参照してください。
+
+## SciFactでの結果
+
+CPUで同じ `all-MiniLM-L6-v2` チェックポイントを使い、学習から取り分けた同じ300件のクエリで全条件を評価しました。各回の学習ペアは256組で、手法間で揃えています。nDCG@10は関連文書が上位10件の中で上にあるほど高くなります。
+
+| nDCG@10 | 初期モデル | 標準MNRL | Cosmea |
+| --- | ---: | ---: | ---: |
+| 学習ペアを固定し、学習シードを変更 | 0.6239 | 0.6290 | 0.6334 |
+| 学習シードを固定し、学習ペアを変更 | 0.6239 | 0.6279 | 0.6327 |
+
+学習後のスコアは各行5回の平均です。学習ペアを変えた場合、標準MNRLに対するCosmeaの差は −0.0077〜+0.0170 でした。時間を繰り返し計測した条件では、学習時間の中央値はCosmeaが8.82秒、標準MNRLが4.89秒でした。各バッチに一様抽出した文書を16件追加するこの条件では約1.8倍です。分割方法、計測条件、logQを無効にした比較は[SciFactベンチマーク](docs/ja/benchmark.md)を参照してください。
+
+## CPU・GPUの検証状況
+
+| 学習環境 | プロジェクトでの検証状況 |
+| --- | --- |
+| CPU・学習プロセス1つ | 組み込みテストで確認済み。利用例もCPUで動作。 |
+| GPU 1台（CUDAまたはApple MPS） | 学習全体の動作は未検証。 |
+| 分散学習・混合精度学習 | 学習全体の動作は未検証。 |
+
+依存ライブラリの対応バージョンや必要なメモリについては[設計ガイド](docs/ja/design.md#資源と互換性の制限)を参照してください。
 
 ## クイックスタート
 
@@ -38,4 +86,4 @@ uv run python quickstart.py
 - [設計ガイド](docs/ja/design.md)では、抽出と補正の前提、損失の種類、対応範囲を説明します。
 - [貢献ガイド](CONTRIBUTING.ja.md)では、開発環境、検証、文書サイトのビルドを案内します。
 
-名前はコスモスの異名 *Cosmea* に由来します。ライセンスと帰属表示は [LICENSE](LICENSE) と [NOTICE](NOTICE.md) を参照してください。開発版はGitHubからインストールできます。
+CosmeaはApache-2.0の開発版です。名前はコスモスの異名 *Cosmea* に由来します。ライセンスと帰属表示は [LICENSE](LICENSE) と [NOTICE](NOTICE.md) を参照してください。
