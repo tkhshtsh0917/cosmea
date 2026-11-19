@@ -36,6 +36,26 @@ def test_iid_inclusion_helper_uses_binomial_probability():
     assert q.tolist() == pytest.approx([7 / 16, 7 / 16, 3 / 4])
 
 
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs MPS")
+@pytest.mark.parametrize("combine,measure", [("pooled", "inclusion"), ("separate", "expected_count")])
+def test_mps_correction_matches_cpu_loss_and_gradients(combine, measure):
+    lab = label([0, 1, 2], {0: 1, 1: 2**25, 2: 1}, n=2**25 + 3, uniform=[1, 3], corpus_size=8, query_ids=[4, 4, 7])
+    scores = torch.tensor([[0.5, 1.0, 1.5, 0.0, -0.3], [0.2, -0.1, 1.2, 0.4, 0.8]], requires_grad=True)
+    rows = torch.tensor([2, 0])
+    options = dict(variant="plugin", combine=combine, q_measure=measure)
+    expected = mixed_negative_logq_loss(scores, lab, rows=rows, **options)
+    expected.sum().backward()
+
+    gpu_scores = scores.detach().to("mps").requires_grad_()
+    gpu_label = {name: value.to("mps") for name, value in lab.items()}
+    actual = mixed_negative_logq_loss(gpu_scores, gpu_label, rows=rows.to("mps"), **options)
+    actual.sum().backward()
+
+    assert actual.device.type == "mps"
+    torch.testing.assert_close(actual.cpu(), expected)
+    torch.testing.assert_close(gpu_scores.grad.cpu(), scores.grad)
+
+
 @pytest.mark.parametrize("measure", ["expected_count", "inclusion"])
 def test_partition_matches_exhaustive_sampling_expectation(measure):
     # Fixed first row, then two of four remaining rows; independent 2-of-5 corpus draw.

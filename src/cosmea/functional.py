@@ -115,8 +115,15 @@ def candidate_log_q(
 
     Returns:
         Shape `(b, C)` with `b` requested rows, or `(C,)` without `rows`. Mined candidates have log weight 0.
-        Zero proposal support gives negative infinity.
+        Zero proposal support gives negative infinity. MPS inputs return float32 log weights on MPS.
     """
+    device = label["cand_count"].device
+    on_mps = device.type == "mps"
+    if on_mps:
+        # MPS has no float64. Compute the proposal from CPU metadata before rounding the log weights for MPS.
+        label = {name: value.cpu() for name, value in label.items()}
+        rows = rows.cpu() if rows is not None else None
+
     source = label["cand_source"]
     batch_size = label["query_id"].numel()
     n, k = batch_size - 1, int((source == SOURCE_UNIFORM).sum())
@@ -154,7 +161,8 @@ def candidate_log_q(
 
     q = torch.where(source == SOURCE_UNIFORM, q_un, q_in) if per_source else q_pool
     # Avoid log(0) for deterministic extra columns; they receive no correction.
-    return torch.where(source == SOURCE_OTHER, torch.ones_like(q), q).log()
+    log_q = torch.where(source == SOURCE_OTHER, torch.ones_like(q), q).log()
+    return log_q.to(device=device, dtype=torch.float32) if on_mps else log_q
 
 
 def known_positive_mask(
@@ -306,7 +314,9 @@ def _negative_log_partition(
             # This proposal depends only on the corpus, regardless of the row sampler.
             draws = int((source == SOURCE_UNIFORM).sum())
             uniform_q = _uniform_probability(draws, int(label["corpus_size"]))
-            log_q = (label["cand_in_corpus"].to(torch.float64) * uniform_q).log()
+            log_uniform_q = math.log(uniform_q) if uniform_q else -math.inf
+            in_corpus = label["cand_in_corpus"]
+            log_q = torch.full_like(in_corpus, log_uniform_q, dtype=scores.dtype).masked_fill(~in_corpus, -torch.inf)
         else:
             log_q = candidate_log_q(label, q_measure, sources is not None, rows=rows, iid_proposal=iid_proposal)
         log_q = log_q.to(scores.dtype)
