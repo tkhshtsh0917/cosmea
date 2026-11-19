@@ -65,6 +65,8 @@ mise exec -- uv run --frozen --no-sync python experiments/diagnostics/stationari
 
 These illustrate selected distributions, not general variance rankings or proofs of consistency. Exact enumeration grows exponentially. Keep arguments, seeds, source revision and environment with results. The full default quality experiment has not been rerun for this revision. See [design](docs/design.md) for metrics and assumptions.
 
+The [SciFact benchmark](docs/benchmark.md) compares an initial checkpoint, standard MNRL and Cosmea on real retrieval data.
+
 ## Reviews and readable code
 
 Keep responsibilities separate across `src/cosmea`, `examples`, `tests`, `experiments` and `scripts`. Use meaningful blank lines between input validation, computation and state changes. In multiline calls, put one argument per line with trailing commas; keep simple short calls compact. Explain shapes, failures and important constraints in docstrings.

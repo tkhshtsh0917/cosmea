@@ -11,12 +11,14 @@ nav:
       - Examples: examples/README.md
       - Integration guide: docs/api.md
       - Design: docs/design.md
+      - Benchmark: docs/benchmark.md
       - Contributing: CONTRIBUTING.md
   - 日本語:
       - クイックスタート: README.ja.md
       - 利用例: examples/README.ja.md
       - 組み込みガイド: docs/ja/api.md
       - 設計: docs/ja/design.md
+      - ベンチマーク: docs/ja/benchmark.md
       - 貢献ガイド: CONTRIBUTING.ja.md
   - API reference: docs/reference.md
   - Notices: NOTICE.md

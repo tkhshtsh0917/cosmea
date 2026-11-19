@@ -65,6 +65,8 @@ mise exec -- uv run --frozen --no-sync python experiments/diagnostics/stationari
 
 これらは特定の分布での観察であり、一般的な分散の優劣や一致性の証明ではない。全列挙の計算量は指数的に増える。結果には引数・seed・ソース版・環境を添える。この改訂では既定の品質実験全体を再実行していない。指標と前提は[設計](docs/ja/design.md)を参照。
 
+[SciFactベンチマーク](docs/ja/benchmark.md)では、実データで初期モデル・標準MNRL・Cosmeaを比較する。
+
 ## レビューと読みやすいコード
 
 `src/cosmea`・`examples`・`tests`・`experiments`・`scripts`の責務を分ける。入力検証・計算・状態更新の間に意味のある空行を入れる。複数行の呼出しは1行1引数と末尾カンマを使い、短い単純な呼出しは1行でよい。docstringにはshape・失敗条件・重要な制約を説明する。
