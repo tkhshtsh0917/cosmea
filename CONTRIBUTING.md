@@ -6,7 +6,7 @@
 
 | Setting | Source of truth |
 | --- | --- |
-| Library | `src/cosmea`; CPU, one training process, finite datasets |
+| Library | `src/cosmea` with one training process and finite datasets. See [CPU and GPU validation](README.md#cpu-and-gpu-validation) |
 | Python | Development version in `.python-version`; supported minimum in `pyproject.toml` |
 | Tools | mise pins uv and Betterleaks in `mise.toml` |
 | Dependencies | Runtime ranges and the `train` extra in `pyproject.toml`. Developer and documentation tools use the `dev` and `docs` groups |
@@ -38,6 +38,8 @@ The main CI job runs the same locked setup/check tasks. Separate compatibility j
 ## Tests and examples
 
 Tests at the root of `tests/` cover the library, including small exact sampling oracles and Trainer integration. `tests/tooling/` checks development audits; `tests/experiments/` checks synthetic metric definitions. All are included in `mise run check`.
+
+On a Mac with MPS available to PyTorch, run `mise exec -- uv run --frozen --no-sync pytest -q -k mps` to check the CSV training and save path and compare logQ losses and gradients with CPU. The hardware tests are skipped when PyTorch cannot access MPS.
 
 The real DataLoader worker test exercises process initialization and needs OS shared memory. If the environment restricts it, run the two groups separately and report any unexecuted group:
 

@@ -48,8 +48,9 @@ The fine-tuned scores are means over five runs per row. When the training pairs 
 
 | Training setup | Project validation |
 | --- | --- |
-| CPU, one training process | Verified by integration tests. The examples run on CPU. |
-| Single GPU (CUDA or Apple MPS) | End-to-end training has not been verified. |
+| CPU, one training process | Verified by integration tests. The quickstart and CSV example default to CPU. |
+| Apple MPS, one GPU | Verified for FP32 CSV training with the pooled `plugin` loss, followed by model save and reload. See the [CSV example](examples/README.md#choose-a-device). |
+| CUDA, one GPU | The CSV example accepts `--device cuda`. End-to-end training has not been verified. |
 | Distributed or mixed-precision training | End-to-end training has not been verified. |
 
 See the [design guide](docs/design.md#resource-and-compatibility-limits) for supported dependency versions and resource limits.

@@ -6,7 +6,7 @@
 
 | 項目 | 正本 |
 | --- | --- |
-| ライブラリ | `src/cosmea`。CPU・単一学習プロセス・有限dataset |
+| ライブラリ | `src/cosmea`。単一学習プロセス・有限dataset。[CPU・GPUの検証状況](README.ja.md#cpugpuの検証状況)を参照 |
 | Python | 開発版は`.python-version`、対応下限は`pyproject.toml` |
 | ツール | `mise.toml`でuvとBetterleaksを固定 |
 | 依存関係 | 実行時の範囲と`train` extraは`pyproject.toml`、開発・文書ビルド用の依存は`dev`／`docs`グループ |
@@ -38,6 +38,8 @@ mise run check
 ## テストと利用例
 
 `tests/`直下は本体のテストで、小さな全列挙oracleとTrainer統合を含む。`tests/tooling/`は開発用監査、`tests/experiments/`は合成実験の指標を検証する。すべて`mise run check`の対象とする。
+
+PyTorchでMPSを使えるMacでは、`mise exec -- uv run --frozen --no-sync pytest -q -k mps` でCSV学習から保存までを検証し、logQの損失と勾配をCPUと比較できる。PyTorchでMPSを使えない環境では実機テストをスキップする。
 
 実際のDataLoader workerテストはプロセス初期化を通すため、OSの共有メモリが必要。制限環境では次の2群に分け、未実行の群があれば明記する。
 

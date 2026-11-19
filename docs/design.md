@@ -78,7 +78,11 @@ With $B$ query rows and $C$ candidates, ordinary score memory is $O(BC)$. Cached
 
 Half-precision scores are promoted inside the loss to make the calculation more stable. Mixed-precision model training remains unverified.
 
-Cosmea uses Sentence Transformers 6.3 collator helpers and GradCache. Supported ranges are ST `>=6.3,<6.4` and PyTorch `>=2.6,<3`, with NumPy `>=2,<3`; ST v5 compatibility is not claimed. CPU with one training process is verified. GPU, DDP, cross-device candidate sharing, streaming counts and multiple datasets need additional sampling definitions or validation. In-batch logQ with duplicate-constrained, weighted or grouped row sampling requires a proposal matched to that sampler. See [batch sampling and logQ](api.md#choose-a-batch-sampler).
+On MPS, Cosmea computes proposal weights from metadata on CPU in float64, then transfers the log weights to MPS in float32. Scores and their gradients stay on the training device. When `separate` mode applies a correction to uniform negatives, it computes a scalar log weight from the corpus size and number of draws and uses it directly on the training device.
+
+Cosmea uses Sentence Transformers 6.3 collator helpers and GradCache. Supported ranges are ST `>=6.3,<6.4` and PyTorch `>=2.6,<3`, with NumPy `>=2,<3`. Single-process CPU training is verified. The verified Apple MPS workflow covers FP32 CSV training with the pooled `plugin` loss and model save and reload. See the [CSV validation details](../examples/README.md#choose-a-device).
+
+CUDA training, DDP, cross-device candidate sharing, streaming counts and multiple datasets need additional sampling definitions or validation. In-batch logQ with duplicate-constrained, weighted or grouped row sampling requires a proposal matched to that sampler. See [batch sampling and logQ](api.md#choose-a-batch-sampler).
 
 ## Formula reference
 

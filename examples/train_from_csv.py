@@ -6,6 +6,7 @@ import argparse
 import csv
 from pathlib import Path
 
+import torch
 from datasets import Dataset
 from sentence_transformers import (
     SentenceTransformer,
@@ -50,6 +51,12 @@ def main() -> None:
     parser.add_argument("--train", type=Path, required=True)
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--device",
+        choices=("cpu", "mps", "cuda"),
+        default="cpu",
+        help="Training device (default: cpu)",
+    )
     parser.add_argument("--uniform", type=int, default=16, help="Distinct corpus negatives per batch")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--epochs", type=int, default=1)
@@ -61,6 +68,13 @@ def main() -> None:
         parser.error("--batch-size and --epochs must be positive")
     if args.max_length is not None and args.max_length < 1:
         parser.error("--max-length must be positive")
+    if args.device == "mps" and not torch.backends.mps.is_available():
+        parser.error("--device mps requires an available PyTorch MPS device")
+    if args.device == "cuda":
+        if not torch.cuda.is_available():
+            parser.error("--device cuda requires an available CUDA GPU")
+        if torch.cuda.device_count() != 1:
+            parser.error("--device cuda requires one visible GPU; select a GPU with CUDA_VISIBLE_DEVICES")
 
     # 1. Load matching query and document pairs and the collection we want to search.
     try:
@@ -69,7 +83,21 @@ def main() -> None:
     except (ValueError, OSError, csv.Error) as error:
         parser.error(str(error))
     dataset = Dataset.from_list(rows)
-    model = SentenceTransformer(args.model, device="cpu")
+
+    training_args = SentenceTransformerTrainingArguments(
+        output_dir=str(args.output / "training"),
+        num_train_epochs=args.epochs,
+        per_device_train_batch_size=args.batch_size,
+        batch_sampler=BatchSamplers.BATCH_SAMPLER,
+        use_cpu=args.device == "cpu",
+        dataloader_pin_memory=args.device != "mps",
+        save_strategy="no",
+        report_to="none",
+    )
+    if training_args.device.type != args.device:
+        parser.error(f"--device {args.device} was requested, but Trainer selected {training_args.device}")
+
+    model = SentenceTransformer(args.model, device=str(training_args.device))
 
     # 2. Count positives and add uniform negatives to each batch.
     frequency = DocumentFrequency.from_dataset(dataset, document_id_column="document_id")
@@ -98,15 +126,6 @@ def main() -> None:
         mask_same_document=True,
         mask_same_query=True,
     )
-    training_args = SentenceTransformerTrainingArguments(
-        output_dir=str(args.output / "training"),
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.batch_size,
-        batch_sampler=BatchSamplers.BATCH_SAMPLER,
-        use_cpu=True,
-        save_strategy="no",
-        report_to="none",
-    )
     trainer = SentenceTransformerTrainer(
         model=model,
         args=training_args,
@@ -115,8 +134,16 @@ def main() -> None:
         data_collator=collator,
     )
 
+    device = trainer.accelerator.device
+    if device.type != args.device:
+        parser.error(f"--device {args.device} was requested, but Accelerate selected {device}")
+
+    print(f"Training device: {device}", flush=True)
     trainer.train()
-    model.save_pretrained(args.output / "model")
+
+    model_dir = args.output / "model"
+    model.save_pretrained(model_dir)
+    print(f"Saved model: {model_dir}")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ Start with the [quickstart](../README.md#quickstart) to try training and search 
 
 ## Train with your own data
 
-Use [train_from_csv.py](train_from_csv.py). It loads an existing model, reads training pairs and a searchable collection, trains on CPU, and saves the result.
+Use [train_from_csv.py](train_from_csv.py). It loads an existing model, reads training pairs and a searchable collection, and saves the fine-tuned model. Training defaults to CPU.
 
 First [install Cosmea with the train extra](../README.md#quickstart), then copy `train_from_csv.py` into your project. Prepare UTF-8 CSV files with the following columns. UTF-8 files with a BOM work too. The rows below illustrate the format.
 
@@ -49,6 +49,12 @@ See [the quickstart code](quickstart.py) for search with a saved model. To asses
 For a prompt-based model, set `--query-prompt "query: "` and `--document-prompt "passage: "` to the actual prefixes required by the model; these are examples, not universal defaults. `--max-length 256` sets the collator token limit. For Router tasks use the API guide and pass `router_mapping` directly to the collator. TrainingArguments alone does not transfer these settings.
 
 The prompt flags configure training preprocessing; they do not rewrite the saved model's default prompts. Apply the same query/document prefixes when encoding after reload.
+
+### Choose a device
+
+On a Mac where PyTorch can access MPS, add `--device mps` to the command above. For a single CUDA GPU, use `--device cuda`. If your machine has multiple CUDA GPUs, expose one to the script with `CUDA_VISIBLE_DEVICES`, for example `CUDA_VISIBLE_DEVICES=0`. Use `--device cpu` to select CPU explicitly. The script prints `Training device:` before training, rejects unavailable devices, and prints `Saved model:` once saving succeeds.
+
+On 2026-11-20, we ran `--device mps` on an Apple M5 Pro with macOS 26.6.2, PyTorch 2.15.0, and Sentence Transformers 6.3.0. We trained `ruri-v3-130m` in FP32 on four synthetic training pairs and a six-document collection. We used batch size 2, two uniform negatives per batch, `--max-length 64`, and the model's retrieval prompts. After one epoch, we verified that weights had changed, saved the model, reloaded it on MPS, and produced a finite embedding. PyTorch's MPS fallback for unsupported operations was off. See the [checkpoint revision](https://huggingface.co/cl-nagoya/ruri-v3-130m/tree/e3114c6ee10dbab8b4b235fbc6dcf9dd4d5ac1a6).
 
 ## Mine hard negatives, train, and rerank
 

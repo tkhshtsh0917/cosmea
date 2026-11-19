@@ -6,7 +6,7 @@
 
 ## 手元のデータで学習する
 
-[train_from_csv.py](train_from_csv.py)を使ってください。既存のモデルを読み込み、学習ペアと検索対象をCSVから受け取り、CPUで学習して保存する例です。
+[train_from_csv.py](train_from_csv.py)を使ってください。既存のモデルを読み込み、学習ペアと検索対象をCSVから受け取り、学習したモデルを保存します。学習には既定でCPUを使います。
 
 まず[train extra付きでCosmeaをインストール](../README.ja.md#クイックスタート)し、`train_from_csv.py`をお使いのプロジェクトへコピーします。UTF-8のCSVに次の列を用意してください。BOM付きのUTF-8にも対応しています。以下は入力形式を示す例です。
 
@@ -49,6 +49,12 @@ CSVスクリプトは[組み込みガイドの標準設定](../docs/ja/api.md#tr
 promptを使うモデルでは、`--query-prompt "query: "`・`--document-prompt "passage: "`へモデルが要求する接頭辞を指定します。ここで示した文字列は例で、全モデルの既定値ではありません。`--max-length 256`はコレーターのトークン上限です。RouterのtaskはAPIガイドに従い、コレーターへ`router_mapping`を直接渡します。TrainingArgumentsだけではこれらの設定は転送されません。
 
 promptの引数は学習時の前処理を設定するもので、保存モデルの既定promptを書き換えません。再読込後のエンコードにも、同じクエリ／文書の接頭辞を適用してください。
+
+### デバイスを選ぶ
+
+PyTorchでMPSを使えるMacでは、上のコマンドに `--device mps` を追加します。CUDA GPUを1台使う場合は `--device cuda` を指定します。CUDA GPUが複数ある場合は、`CUDA_VISIBLE_DEVICES=0` のように `CUDA_VISIBLE_DEVICES` で1台に絞ってください。CPUを明示する場合は `--device cpu` を指定します。スクリプトは学習前に `Training device:` を表示し、指定したデバイスを使えなければエラーで終了します。保存に成功すると `Saved model:` を表示します。
+
+2026-11-20に、Apple M5 Pro、macOS 26.6.2、PyTorch 2.15.0、Sentence Transformers 6.3.0で `--device mps` を確認しました。`ruri-v3-130m` を、合成の学習ペア4組と検索対象6文書でFP32学習しました。バッチサイズ2、一様負例2件、`--max-length 64`、モデル指定の検索用プロンプトを使いました。1エポック後に重みの更新を確認し、保存したモデルをMPSで再読み込みして有限値の埋め込みを取得しました。PyTorchのMPS自動フォールバックは無効です。使用した[チェックポイントのリビジョン](https://huggingface.co/cl-nagoya/ruri-v3-130m/tree/e3114c6ee10dbab8b4b235fbc6dcf9dd4d5ac1a6)を参照してください。
 
 ## 難例採掘から再ランキングまで
 

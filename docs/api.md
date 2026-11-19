@@ -240,7 +240,7 @@ Pass `loss` to the Trainer and keep the same `MixedNegativeDataCollator`. To use
 
 Cosmea's sampling metadata is independent of embedding size, so the same IDs and counts are used at each size. With weights $w_m$, the combined loss is $\sum_m w_m\ell_m$; the weights default to 1 and are not automatically averaged.
 
-CPU tests compare plain and cached wrappers with explicit losses at 32, 16 and 8 dimensions, including unequal weights. Trainer tests use the masked plugin workflow with uniform and mined negatives, including a singleton final batch and a cached loss wrapped in Matryoshka. This verifies integration and gradients, not retrieval quality after truncation. Random dimension subsets (`n_dims_per_step`), GPU and Matryoshka2dLoss have not been tested here.
+CPU tests compare plain and cached wrappers with explicit losses at 32, 16 and 8 dimensions, including unequal weights. Trainer tests use the masked plugin workflow with uniform and mined negatives, including a singleton final batch and a cached loss wrapped in Matryoshka. This verifies integration and gradients, not retrieval quality after truncation. Random dimension subsets (`n_dims_per_step`), Matryoshka training on GPU and Matryoshka2dLoss remain untested.
 
 ## Reference: metadata passed to the loss
 
