@@ -154,11 +154,15 @@ class _LogQConfig:
 class LogQMultipleNegativesRankingLoss(_LogQConfig, nn.Module):
     """InfoNCE over in-batch and uniformly sampled negatives with sampling-bias correction.
 
+    The default uses `plugin` with pooled expected counts and both known-positive masks.
+    To use the previous defaults, pass `variant="yi"`. It uses separate losses with the
+    document mask disabled and the query mask enabled.
+
     Args:
         model: the SentenceTransformer.
         scale: inverse temperature applied to the similarity (20 = temperature 0.05).
         similarity_fct: pairwise similarity, default cosine.
-        variant: `"yi"` (default, independent-draw approximation), `"plugin"` or `"improved"`
+        variant: `"plugin"` (default), `"yi"` (independent-draw approximation) or `"improved"`
             (confidence-weighted objective with the same first gradient as `"plugin"`).
         logq_strength: default lambda in ``f - lambda * log q``; 0 disables correction.
         in_batch_logq_strength: Override for in-batch candidates in separate mode. None inherits `logq_strength`.
@@ -167,7 +171,7 @@ class LogQMultipleNegativesRankingLoss(_LogQConfig, nn.Module):
         combine: ``"separate"`` or ``"pooled"`` softmax over the negative sources; ``"auto"``
             uses "separate" for "yi" and "pooled" otherwise.
         mask_same_document: mask accidental hits; ``None`` = keep them for "yi", mask otherwise.
-        mask_same_query: mask the positives of other rows that share the row's query.
+        mask_same_query: mask the positives of other rows that share the row's query. Enabled by default.
     """
 
     def __init__(
@@ -175,7 +179,7 @@ class LogQMultipleNegativesRankingLoss(_LogQConfig, nn.Module):
         model: nn.Module,
         scale: float = 20.0,
         similarity_fct: Callable[[Tensor, Tensor], Tensor] = util.cos_sim,
-        variant: Variant = "yi",
+        variant: Variant = "plugin",
         logq_strength: float = 1.0,
         q_measure: QMeasure = "expected_count",
         combine: Combine = "auto",
@@ -224,7 +228,7 @@ class CachedLogQMultipleNegativesRankingLoss(_LogQConfig, CachedLossMixin, nn.Mo
     """GradCache version of `LogQMultipleNegativesRankingLoss` for large batches.
 
     The correction is a constant with respect to the embeddings, so it is compatible with
-    gradient caching. It accepts the same loss options as `LogQMultipleNegativesRankingLoss`.
+    gradient caching. It has the same loss options and defaults as `LogQMultipleNegativesRankingLoss`.
 
     Args:
         mini_batch_size: Positive number of query rows per chunk of the cached loss calculation.
@@ -237,7 +241,7 @@ class CachedLogQMultipleNegativesRankingLoss(_LogQConfig, CachedLossMixin, nn.Mo
         scale: float = 20.0,
         similarity_fct: Callable[[Tensor, Tensor], Tensor] = util.cos_sim,
         mini_batch_size: int = 32,
-        variant: Variant = "yi",
+        variant: Variant = "plugin",
         logq_strength: float = 1.0,
         q_measure: QMeasure = "expected_count",
         combine: Combine = "auto",

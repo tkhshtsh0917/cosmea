@@ -28,10 +28,10 @@ collator = MixedNegativeDataCollator(
     num_uniform=4,
 )
 
-loss = LogQMultipleNegativesRankingLoss(model, variant="plugin")
+loss = LogQMultipleNegativesRankingLoss(model)
 ```
 
-Pass `data_collator=collator` and `loss=loss` when creating the Trainer. If your model needs prompts, set `prompts` on the collator. For the full setup, explicit IDs, and how to use `NO_DUPLICATES` with Cosmea, see the [integration guide](docs/api.md).
+Both the plain and Cached losses default to `plugin`, `pooled`, and both known-positive masks. Specify `variant="yi"` to reproduce the previous defaults. Pass `data_collator=collator` and `loss=loss` when creating the Trainer. If your model needs prompts, set `prompts` on the collator. For the full setup, explicit IDs, and how to use `NO_DUPLICATES` with Cosmea, see the [integration guide](docs/api.md).
 
 ## SciFact results
 

@@ -28,10 +28,10 @@ collator = MixedNegativeDataCollator(
     num_uniform=4,
 )
 
-loss = LogQMultipleNegativesRankingLoss(model, variant="plugin")
+loss = LogQMultipleNegativesRankingLoss(model)
 ```
 
-Trainerを作成するときに `data_collator=collator` と `loss=loss` を渡します。モデルにプロンプトが必要な場合は、コレーターの `prompts` に設定してください。Trainer全体の設定、明示的なIDの使い方、`NO_DUPLICATES` と併用する場合の手順は[組み込みガイド](docs/ja/api.md)を参照してください。
+通常版・Cached版ともに、既定では `plugin`、`pooled`、2つの既知正例マスクを使います。従来の既定設定で学習する場合は `variant="yi"` を指定してください。Trainerを作成するときに `data_collator=collator` と `loss=loss` を渡します。モデルにプロンプトが必要な場合は、コレーターの `prompts` に設定してください。Trainer全体の設定、明示的なIDの使い方、`NO_DUPLICATES` と併用する場合の手順は[組み込みガイド](docs/ja/api.md)を参照してください。
 
 ## SciFactでの結果
 

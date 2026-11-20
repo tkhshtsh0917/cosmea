@@ -29,8 +29,8 @@ The standard usage examples combine `plugin`, pooled expected counts, uniform ra
 
 | Variant | What changes | How to interpret it |
 | --- | --- | --- |
-| `yi` (default) | Corrects positive and negative scores. By default, computes and averages losses for the two sources separately | Uses an independent-draw approximation based on training counts |
-| `plugin` | Keeps the positive score uncorrected and estimates the total negative contribution | A useful way to match the correction to the actual draw procedure |
+| `plugin` (default for both loss classes) | Keeps the positive score uncorrected and estimates the total negative contribution | A useful way to match the correction to the actual draw procedure |
+| `yi` | Corrects positive and negative scores. With `combine="auto"`, computes separate losses and averages the active sources | Uses an independent-draw approximation based on training counts |
 | `improved` | Multiplies a score difference by a confidence weight whose gradient is stopped | Has the same first gradient as plugin with identical settings; loss values and higher derivatives differ |
 
 ### What changes when positives are masked?
@@ -46,7 +46,7 @@ In [the five-document diagnostic](../experiments/diagnostics/stationarity.py), e
 
 The masked yi gradient need not vanish, and plugin can also have substantial bias with few negatives. The example does not establish a general ordering, monotonicity with batch size, or better retrieval quality. Compare settings on held-out full-corpus retrieval metrics.
 
-The row sampler draws training rows without replacement; the collator independently draws distinct corpus documents. Thus, a consistency result proved for independent draws does not automatically apply to the default yi implementation. yi does not support `inclusion`. When uniform correction is enabled in separate yi, the positive IDs must be present in the corpus.
+The row sampler draws training rows without replacement, and the collator independently draws distinct corpus documents. `yi` approximates those finite-population draws as independent draws. Its consistency result assumes independent draws. `yi` requires `expected_count`. When uniform correction is enabled in separate yi, the positive IDs must be present in the corpus.
 
 Under suitable sampling assumptions, the average estimate of the total negative contribution is correct. This property is called **unbiasedness**. Taking a logarithm or a ratio can introduce bias again, so it does not imply unbiased loss gradients. Query-based filtering and manually supplied negatives also change the assumptions.
 

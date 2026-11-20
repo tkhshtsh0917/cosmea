@@ -27,7 +27,7 @@ Existing code can still use `ItemFrequency` and the keywords `item_frequency`, `
 
 ## Connect Cosmea to the Trainer
 
-Use the `train_dataset`, `corpus_texts` and `corpus_ids` prepared above. Start with random row sampling, `plugin`, pooled expected counts and both known-positive masks. The [quickstart script](../examples/quickstart.py) shows how to create these inputs in Python.
+Use the `train_dataset`, `corpus_texts` and `corpus_ids` prepared above. With the loss defaults, use the random row sampler shown below. For how to create these inputs in Python, see the [quickstart script](../examples/quickstart.py).
 
 ```python
 from sentence_transformers import (
@@ -55,14 +55,7 @@ collator = MixedNegativeDataCollator(
     document_id_column="document_id",
 )
 
-loss = LogQMultipleNegativesRankingLoss(
-    model,
-    variant="plugin",
-    combine="pooled",
-    logq_strength=1.0,
-    mask_same_document=True,
-    mask_same_query=True,
-)
+loss = LogQMultipleNegativesRankingLoss(model)
 
 args = SentenceTransformerTrainingArguments(
     output_dir="outputs/run",
@@ -129,16 +122,29 @@ Use `combine="separate"` to give mined negatives their own uncorrected objective
 
 ## Choose the main options
 
-The standard example above uses `plugin`, pooled expected counts, random row sampling and both known-positive masks. The loss class still defaults to yi. `improved` and inclusion are advanced research controls; `improved` must not be selected by its scalar evaluation loss.
+Both loss classes default to `plugin`, `pooled`, and `expected_count`, with `mask_same_document=True` and `mask_same_query=True`.
+
+Pass `variant="yi"` to use the previous class defaults. With the other options omitted, this selects `separate`, disables the document mask, and enables the query mask. Choose either loss class below.
+
+```python
+from cosmea import CachedLogQMultipleNegativesRankingLoss, LogQMultipleNegativesRankingLoss
+
+loss = LogQMultipleNegativesRankingLoss(model, variant="yi")
+cached_loss = CachedLogQMultipleNegativesRankingLoss(model, variant="yi")
+```
+
+To set different logQ strengths for the two sampled sources with `plugin`, specify `combine="separate"`. For direct calls that start from scores, `mixed_negative_logq_loss` defaults to `yi`. Pass matching loss options when comparing a direct call with a Trainer run.
+
+`improved` and `inclusion` are advanced research options. Compare models trained with `improved` using retrieval metrics.
 
 | Option | Meaning |
 | --- | --- |
 | `num_uniform` | Number of distinct corpus documents to add to each batch. Use 0 for in-batch negatives alone; do not exceed the number of distinct corpus IDs |
-| `variant` | `yi` is the default. See [how the losses differ](design.md#three-loss-options) before switching to `plugin` or `improved` |
+| `variant` | Training loss classes default to `plugin`. See [how the losses differ](design.md#three-loss-options) for `yi` and `improved` |
 | `logq_strength` | Strength of the correction: 0 disables it, 1 applies it fully. Must be finite and nonnegative. Intermediate values need evaluation |
 | `in_batch_logq_strength` / `uniform_logq_strength` | Source overrides for `combine="separate"`; `None` inherits `logq_strength`. Finite nonnegative values; 0 skips correction and its proposal checks without dropping the source. In separate yi the uniform offset cancels, so `uniform_logq_strength` affects validation only. Pooled mode uses one shared strength |
 | `scale` | Multiplies similarity before correction; default 20. Must be finite and positive. It is the inverse temperature |
-| `combine` | `pooled` uses all candidate sources together. `separate` computes one loss per source and averages the active sources. `auto` chooses separate for yi and pooled otherwise |
+| `combine` | `pooled` uses all candidate sources together. `separate` computes one loss per source and averages the active sources. The default `auto` chooses `separate` for `yi` and `pooled` otherwise |
 | `q_measure` | `expected_count` keeps repeated documents and uses their expected number of appearances. `inclusion` keeps one eligible occurrence per document and uses the chance of appearing at least once. Inclusion is unavailable with yi |
 | `mini_batch_size` | Positive integer chunk size for the Cached loss. Smaller chunks reduce score-matrix memory. Gradient accumulation alone does not increase the candidate pool |
 
@@ -228,7 +234,7 @@ The following example assumes a 768-dimensional model. Choose positive dimension
 from sentence_transformers.sentence_transformer.losses import MatryoshkaLoss
 from cosmea import LogQMultipleNegativesRankingLoss
 
-base_loss = LogQMultipleNegativesRankingLoss(model, variant="plugin")
+base_loss = LogQMultipleNegativesRankingLoss(model)
 loss = MatryoshkaLoss(
     model=model,
     loss=base_loss,

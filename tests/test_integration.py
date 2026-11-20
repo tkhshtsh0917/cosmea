@@ -87,6 +87,7 @@ def test_cached_loss_matches_plain_loss(setup):
     model.eval()  # dropout would make two forward passes differ
     for kwargs in (
         dict(),
+        dict(variant="yi"),
         dict(variant="improved", q_measure="inclusion"),
         dict(variant="plugin", combine="separate", in_batch_logq_strength=0, uniform_logq_strength=1),
     ):
@@ -147,6 +148,18 @@ def test_plain_and_cached_score_texts_in_metadata_order(setup):
         torch.testing.assert_close(actual, expected)
         actual_grads = [p.grad for p in model.parameters() if p.grad is not None]
         torch.testing.assert_close(actual_grads, expected_grads, atol=5e-5, rtol=1e-4)
+
+
+@pytest.mark.parametrize("loss_cls", [LogQMultipleNegativesRankingLoss, CachedLogQMultipleNegativesRankingLoss])
+@pytest.mark.parametrize(
+    "kwargs,expected",
+    [({}, ("plugin", "pooled", True, True)), ({"variant": "yi"}, ("yi", "separate", False, True))],
+    ids=["default", "explicit-yi"],
+)
+def test_loss_constructors_resolve_default_and_explicit_yi_settings(loss_cls, kwargs, expected):
+    config = loss_cls(torch.nn.Identity(), **kwargs).get_config_dict()
+
+    assert tuple(config[key] for key in ("variant", "combine", "mask_same_document", "mask_same_query")) == expected
 
 
 def test_loss_constructors_preserve_legacy_positional_arguments():
@@ -289,14 +302,7 @@ def test_trainer_consumes_metadata_and_updates_model(tmp_path, cached):
         document_id_column="document_id",
     )
     loss_cls = CachedLogQMultipleNegativesRankingLoss if cached else LogQMultipleNegativesRankingLoss
-    loss = loss_cls(
-        model,
-        variant="plugin",
-        combine="pooled",
-        mask_same_document=True,
-        mask_same_query=True,
-        **({"mini_batch_size": 3} if cached else {}),
-    )
+    loss = loss_cls(model, **({"mini_batch_size": 3} if cached else {}))
     if cached:
         loss = MatryoshkaLoss(model=model, loss=loss, matryoshka_dims=[32, 16, 8])
 

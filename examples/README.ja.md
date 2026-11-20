@@ -40,7 +40,7 @@ uv run python train_from_csv.py \
   --uniform 2
 ```
 
-CSVスクリプトは[組み込みガイドの標準設定](../docs/ja/api.md#trainerに組み込む)に合わせ、`plugin`・pooled・期待出現回数を使います。`BatchSamplers.BATCH_SAMPLER`、`mask_same_document=True`、`mask_same_query=True`を明示しています。APIで損失の種類を省略した場合の既定は引き続きyiです。
+CSVスクリプトは損失の既定設定に従い、`plugin` で出所をまとめて期待出現回数を使い、2つの既知正例マスクを適用します。学習行は `BatchSamplers.BATCH_SAMPLER` でランダムに抽出します。詳しくは[組み込みガイドの標準設定](../docs/ja/api.md#trainerに組み込む)を参照してください。
 
 `--model`には、ローカルのSentence Transformersモデルのディレクトリか、Hugging FaceのモデルIDを指定できます。後者ではモデルをダウンロードする場合があります。一様負例の数はコーパスの重複しないID数以下にしてください。学習したモデルは`outputs/retriever/model`へ保存します。保存するrunの場所は`--output`で選べます。
 

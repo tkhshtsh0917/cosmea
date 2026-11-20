@@ -349,6 +349,8 @@ def mixed_negative_logq_loss(
 ) -> Tensor:
     """Return per-query losses for scores that already include the temperature scale.
 
+    This score-level function defaults to `yi`. The training loss classes default to `plugin`.
+
     - `yi` corrects positive and negative scores using an empirical iid proposal approximation.
     - `plugin` corrects negatives by expected counts or inclusion probabilities and keeps the positive unchanged.
     - `improved` uses a stop-gradient confidence weight. It has the same first derivative as `plugin`

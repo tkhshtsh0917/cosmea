@@ -56,13 +56,7 @@ def run(model_name: str, output_dir: Path) -> None:
         document_id_column="document_id",
         prompts={"anchor": model.prompts.get("query", ""), "positive": model.prompts.get("document", "")},
     )
-    loss = LogQMultipleNegativesRankingLoss(
-        model,
-        variant="plugin",
-        combine="pooled",
-        mask_same_document=True,
-        mask_same_query=True,
-    )
+    loss = LogQMultipleNegativesRankingLoss(model)
     trainer = SentenceTransformerTrainer(
         model=model,
         args=SentenceTransformerTrainingArguments(

@@ -110,7 +110,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cached", action="store_true")
     parser.add_argument("--workers", type=int, default=0)
-    parser.add_argument("--variant", default="yi")
+    parser.add_argument("--variant", default="plugin")
     parser.add_argument("--combine", default="auto")
     parser.add_argument("--q-measure", default="expected_count")
     parser.add_argument("--logq-strength", type=float, default=1.0)

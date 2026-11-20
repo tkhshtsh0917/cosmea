@@ -27,7 +27,7 @@
 
 ## Trainerに組み込む
 
-上の表に沿って用意した `train_dataset`、`corpus_texts`、`corpus_ids` を使います。まずはランダムな行抽出、`plugin`、`pooled`、2つの既知正例マスクを組み合わせます。Pythonでデータを作る手順は[クイックスタートのコード](../../examples/quickstart.py)で確認できます。
+上の表に沿って用意した `train_dataset`、`corpus_texts`、`corpus_ids` を使います。損失を既定の設定で使う場合は、以下のように行をランダムに抽出するサンプラーを指定します。Pythonでデータを作る手順は[クイックスタートのコード](../../examples/quickstart.py)を参照してください。
 
 ```python
 from sentence_transformers import (
@@ -57,14 +57,7 @@ collator = MixedNegativeDataCollator(
     document_id_column="document_id",
 )
 
-loss = LogQMultipleNegativesRankingLoss(
-    model,
-    variant="plugin",
-    combine="pooled",
-    logq_strength=1.0,
-    mask_same_document=True,
-    mask_same_query=True,
-)
+loss = LogQMultipleNegativesRankingLoss(model)
 
 args = SentenceTransformerTrainingArguments(
     output_dir="outputs/run",
@@ -131,16 +124,29 @@ collator = MixedNegativeDataCollator(
 
 ## 主な設定を選ぶ
 
-上の組み込み例では、ランダムな行抽出と2つの既知正例マスクを使い、`plugin`で出所をまとめて期待出現回数を使います。クラスの既定値はyiです。`improved`とinclusionは比較研究向けです。モデルの選択には検索指標を使ってください。
+通常版・Cached版ともに、既定は `plugin`、`pooled`、`expected_count` で、`mask_same_document=True` と `mask_same_query=True` が有効になります。
+
+従来のクラスの既定設定で学習する場合は `variant="yi"` を指定してください。他の設定を省略すると `separate` になり、文書マスクは無効、クエリマスクは有効になります。通常版とCached版のどちらでも指定できます。
+
+```python
+from cosmea import CachedLogQMultipleNegativesRankingLoss, LogQMultipleNegativesRankingLoss
+
+loss = LogQMultipleNegativesRankingLoss(model, variant="yi")
+cached_loss = CachedLogQMultipleNegativesRankingLoss(model, variant="yi")
+```
+
+`plugin` でバッチ内負例と一様負例の補正強度を個別に設定する場合は `combine="separate"` を指定します。スコアを直接渡す `mixed_negative_logq_loss` の既定は `yi` です。Trainerでの学習結果と比較する場合は、同じ損失の設定を渡してください。
+
+`improved` と `inclusion` は比較研究向けです。`improved` で学習したモデルの比較には検索指標を使ってください。
 
 | 設定 | 意味 |
 | --- | --- |
 | `num_uniform` | 各バッチへ追加する、重複しないコーパス文書の数。0ならバッチ内負例だけを使う。コーパスの重複しないID数を超えて指定できない |
-| `variant` | 既定は`yi`。`plugin`や`improved`へ変える前に[損失の違い](design.md#3種類の損失)を確認する |
+| `variant` | 学習用の損失クラスの既定は `plugin`。`yi` と `improved` については[損失の違い](design.md#3種類の損失)を参照 |
 | `logq_strength` | 補正の強さ。0で補正なし、1で通常の補正。有限の非負値が必要で、中間値の効果は評価して選ぶ |
 | `in_batch_logq_strength` / `uniform_logq_strength` | `combine="separate"`で出所ごとの補正強度を指定する。`None`は`logq_strength`を継承。有限かつ0以上。0はその出所の損失を残し、補正と提案分布の検査を省く。separateのyiでは一様側の補正が相殺され、一様側の強度は検査にだけ影響する。pooledでは共通の強さを使う |
 | `scale` | 補正の前に類似度へ掛ける倍率。既定20。有限の正の値が必要で、「温度」の逆数に当たる |
-| `combine` | `pooled`は候補をまとめて計算。`separate`は負例の出所ごとに計算し、有効なものだけ平均。`auto`はyiでseparate、それ以外でpooledを選ぶ |
+| `combine` | `pooled` は候補をまとめて計算。`separate` は負例の出所ごとに計算し、有効なものだけ平均。既定の `auto` は `yi` で `separate`、それ以外で `pooled` を選ぶ |
 | `q_measure` | `expected_count`は同じ文書の重複を残し、平均して何回現れるかを使う。`inclusion`は有効な候補を文書ごとに1件にし、少なくとも1回現れる確率を使う。yiではinclusionを使えない |
 | `mini_batch_size` | Cached版で一度に計算するクエリ行数。正の整数を指定する。小さくするとスコア行列のメモリを減らせる。勾配の蓄積だけでは候補数は増えない |
 
@@ -230,7 +236,7 @@ Cosmeaの通常版・Cached版のどちらも、Sentence Transformers 6.3の`Mat
 from sentence_transformers.sentence_transformer.losses import MatryoshkaLoss
 from cosmea import LogQMultipleNegativesRankingLoss
 
-base_loss = LogQMultipleNegativesRankingLoss(model, variant="plugin")
+base_loss = LogQMultipleNegativesRankingLoss(model)
 loss = MatryoshkaLoss(
     model=model,
     loss=base_loss,

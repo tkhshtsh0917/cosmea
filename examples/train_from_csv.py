@@ -119,13 +119,7 @@ def main() -> None:
     )
 
     # 3. Train with logQ correction, then save the model for retrieval.
-    loss = LogQMultipleNegativesRankingLoss(
-        model,
-        variant="plugin",
-        combine="pooled",
-        mask_same_document=True,
-        mask_same_query=True,
-    )
+    loss = LogQMultipleNegativesRankingLoss(model)
     trainer = SentenceTransformerTrainer(
         model=model,
         args=training_args,

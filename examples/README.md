@@ -40,7 +40,7 @@ uv run python train_from_csv.py \
   --uniform 2
 ```
 
-The CSV script follows the [standard integration settings](../docs/api.md#connect-cosmea-to-the-trainer). It uses `plugin` with pooled expected counts, `BatchSamplers.BATCH_SAMPLER`, `mask_same_document=True` and `mask_same_query=True`. The library still defaults to yi when no variant is specified.
+The CSV script uses the loss defaults of `plugin`, pooled expected counts, and both known-positive masks. It samples training rows with `BatchSamplers.BATCH_SAMPLER`. See the [standard integration settings](../docs/api.md#connect-cosmea-to-the-trainer).
 
 `--model` accepts a local Sentence Transformers model directory or a Hugging Face model ID. Using a remote ID may download its files. The uniform count cannot exceed the number of distinct corpus IDs. The trained model is saved to `outputs/retriever/model`; run folders can be selected with `--output`.
 
