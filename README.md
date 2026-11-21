@@ -87,4 +87,4 @@ To use an existing local Sentence Transformers model instead of downloading one,
 - [Design](docs/design.md) explains the correction, sampling assumptions, loss variants and their limits.
 - [Contributing](CONTRIBUTING.md) covers setup, checks and documentation builds.
 
-Cosmea is an Apache-2.0 development project. The project name comes from *Cosmea*, another name for cosmos flowers. See [LICENSE](LICENSE) and [NOTICE](NOTICE.md) for licensing and attribution.
+Cosmea uses the Apache-2.0 license. The project name comes from *Cosmea*, another name for cosmos flowers. See [LICENSE](LICENSE) and [NOTICE](NOTICE.md) for licensing and attribution.

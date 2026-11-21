@@ -87,4 +87,4 @@ uv run python quickstart.py
 - [設計ガイド](docs/ja/design.md)では、抽出と補正の前提、損失の種類、対応範囲を説明します。
 - [貢献ガイド](CONTRIBUTING.ja.md)では、開発環境、検証、文書サイトのビルドを案内します。
 
-CosmeaはApache-2.0の開発版です。名前はコスモスの異名 *Cosmea* に由来します。ライセンスと帰属表示は [LICENSE](LICENSE) と [NOTICE](NOTICE.md) を参照してください。
+CosmeaのライセンスはApache-2.0です。名前はコスモスの異名 *Cosmea* に由来します。ライセンスと帰属表示は [LICENSE](LICENSE) と [NOTICE](NOTICE.md) を参照してください。
